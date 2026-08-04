@@ -2,12 +2,13 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   ChevronLeft, ChevronRight, Plus, X, Users, Calendar, MapPin,
   Circle, CheckCircle2, Send, Stamp, FileText, Lock,
-  Wallet, ListChecks, Eye, Building2, Truck, Printer, Mail, Phone, Bell, BellOff, Pencil,
+  Wallet, ListChecks, Eye, EyeOff, Building2, Truck, Printer, Mail, Phone, Bell, BellOff, Pencil,
   MessageCircle, ImagePlus
 } from "lucide-react";
 import {
   supabase, supabaseConfigured,
   signInPlanner, signOut as sbSignOut, getCurrentPlanner,
+  requestPlannerPasswordReset, updatePlannerPassword,
   requestClientMagicLink, claimClientInvites, getCurrentClientEvents,
   fetchEvents as sbFetchEvents, fetchEventDetail,
   toggleTask as sbToggleTask, assignTask as sbAssignTask,
@@ -113,6 +114,25 @@ function urlBase64ToUint8Array(base64String) {
   const outputArray = new Uint8Array(rawData.length);
   for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
   return outputArray;
+}
+
+/* ---------------- Password recovery / invite-acceptance detection ---------------- */
+// Supabase has a well-documented quirk here: clicking a password-reset or
+// invite email link authenticates the person with a real session before
+// they've ever set a password, and onAuthStateChange's PASSWORD_RECOVERY
+// event is not reliably first — SIGNED_IN can fire before it. Relying on
+// that event alone would mean this sometimes just logs the person
+// straight into the app with no password ever set — which is exactly
+// what happened to the admin account added earlier tonight, and would
+// happen to every invited team member too, since invite-planner uses the
+// identical link mechanism. Checking the URL itself, synchronously, on
+// load — before anything async has a chance to race — is the robust,
+// community-recommended way to catch this instead.
+function isPasswordSetupUrl() {
+  if (typeof window === "undefined") return false;
+  const hash = window.location.hash || "";
+  const search = window.location.search || "";
+  return /type=recovery|type=invite/.test(hash) || /type=recovery|type=invite/.test(search);
 }
 
 const LIMITS = {
@@ -3102,6 +3122,110 @@ function AuthShell({ children }) {
   );
 }
 
+// Reused for two different moments that both leave someone authenticated
+// but without a usable password: clicking a "reset your password" email
+// link, and a newly invited team member/admin clicking their invite link
+// for the very first time (invite-planner uses the same underlying
+// Supabase mechanism — see isPasswordSetupUrl's comment for why this
+// can't just rely on the PASSWORD_RECOVERY event).
+function SetNewPasswordForm({ onComplete }) {
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const inputStyle = {
+    width: "100%", fontFamily: FONT_BODY, fontSize: 14, padding: "11px 14px",
+    border: `1px solid ${COLORS.line}`, borderRadius: 4, background: COLORS.paper,
+    color: COLORS.ink, outline: "none",
+  };
+
+  const submit = async () => {
+    if (password.length < 8) {
+      setError("Use at least 8 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Those two passwords don't match.");
+      return;
+    }
+    setError("");
+    setSubmitting(true);
+    try {
+      await updatePlannerPassword(password);
+      onComplete();
+    } catch (err) {
+      setError(err?.message || "Couldn't set that password — try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <AuthShell>
+      <SectionCard>
+        <SectionTitle>Set your password</SectionTitle>
+        <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkSoft, marginBottom: 14, lineHeight: 1.5 }}>
+          Choose a password for your Studio account.
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brassDeep, marginBottom: 6 }}>
+            New password
+          </label>
+          <div style={{ position: "relative" }}>
+            <input
+              type={showPassword ? "text" : "password"}
+              style={{ ...inputStyle, paddingRight: 40 }}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="At least 8 characters"
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              title={showPassword ? "Hide password" : "Show password"}
+              style={{
+                position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+                background: "none", border: "none", color: COLORS.inkFaint, cursor: "pointer",
+                display: "flex", alignItems: "center", padding: 4,
+              }}
+            >
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
+        </div>
+        <div style={{ marginBottom: 18 }}>
+          <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brassDeep, marginBottom: 6 }}>
+            Confirm password
+          </label>
+          <input
+            type={showPassword ? "text" : "password"}
+            style={inputStyle}
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            placeholder="Type it again"
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+        </div>
+        {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.clayDeep, marginBottom: 14 }}>{error}</div>}
+        <button
+          onClick={submit}
+          disabled={submitting}
+          style={{
+            width: "100%", padding: "12px 18px", borderRadius: 4, border: "none",
+            background: COLORS.ink, color: COLORS.paper, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14,
+            cursor: submitting ? "default" : "pointer", opacity: submitting ? 0.7 : 1,
+          }}
+        >
+          {submitting ? "Saving…" : "Save password and continue"}
+        </button>
+      </SectionCard>
+    </AuthShell>
+  );
+}
+
 function WelcomeGate({ onChoosePlanner, onChooseClient, onChooseCode }) {
   const cardStyle = {
     display: "flex", alignItems: "center", gap: 14, width: "100%", textAlign: "left",
@@ -3215,8 +3339,13 @@ function CodeLogin({ onSuccess, onBack }) {
 function PlannerLoginForm({ onSubmit, onBack }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [mode, setMode] = useState("signin"); // signin | forgot | forgot-sent
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetSending, setResetSending] = useState(false);
+  const [resetError, setResetError] = useState("");
 
   const inputStyle = {
     width: "100%", fontFamily: FONT_BODY, fontSize: 14, padding: "11px 14px",
@@ -3240,6 +3369,72 @@ function PlannerLoginForm({ onSubmit, onBack }) {
     }
   };
 
+  const sendResetLink = async () => {
+    if (!isPlausibleEmail(resetEmail)) {
+      setResetError("Enter a valid email address.");
+      return;
+    }
+    setResetError("");
+    setResetSending(true);
+    try {
+      await requestPlannerPasswordReset(resetEmail.trim());
+      setMode("forgot-sent");
+    } catch (err) {
+      setResetError(err?.message || "Couldn't send that link — try again.");
+    } finally {
+      setResetSending(false);
+    }
+  };
+
+  if (mode === "forgot" || mode === "forgot-sent") {
+    return (
+      <div>
+        <button
+          onClick={() => setMode("signin")}
+          style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: COLORS.inkSoft, fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 18 }}
+        >
+          <ChevronLeft size={15} /> Back to sign in
+        </button>
+        <SectionCard>
+          <SectionTitle>Reset your password</SectionTitle>
+          {mode === "forgot-sent" ? (
+            <div style={{ fontFamily: FONT_BODY, fontSize: 14, color: COLORS.inkSoft, lineHeight: 1.6 }}>
+              If <strong style={{ color: COLORS.ink }}>{resetEmail}</strong> has a Studio account, a reset link is on its way — check that inbox (and spam folder) and follow the link to set a new password.
+            </div>
+          ) : (
+            <>
+              <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkSoft, marginBottom: 14, lineHeight: 1.5 }}>
+                Enter your email and we'll send a link to set a new password.
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brassDeep, marginBottom: 6 }}>Email</label>
+                <input
+                  style={inputStyle}
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  placeholder="you@agency.com"
+                  onKeyDown={(e) => e.key === "Enter" && sendResetLink()}
+                />
+              </div>
+              {resetError && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.clayDeep, marginBottom: 14 }}>{resetError}</div>}
+              <button
+                onClick={sendResetLink}
+                disabled={resetSending}
+                style={{
+                  width: "100%", padding: "12px 18px", borderRadius: 4, border: "none",
+                  background: COLORS.ink, color: COLORS.paper, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14,
+                  cursor: resetSending ? "default" : "pointer", opacity: resetSending ? 0.7 : 1,
+                }}
+              >
+                {resetSending ? "Sending…" : "Send reset link"}
+              </button>
+            </>
+          )}
+        </SectionCard>
+      </div>
+    );
+  }
+
   return (
     <div>
       <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: COLORS.inkSoft, fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 18 }}>
@@ -3251,9 +3446,38 @@ function PlannerLoginForm({ onSubmit, onBack }) {
           <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brassDeep, marginBottom: 6 }}>Email</label>
           <input style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@agency.com" onKeyDown={(e) => e.key === "Enter" && submit()} />
         </div>
-        <div style={{ marginBottom: 18 }}>
+        <div style={{ marginBottom: 8 }}>
           <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brassDeep, marginBottom: 6 }}>Password</label>
-          <input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <div style={{ position: "relative" }}>
+            <input
+              type={showPassword ? "text" : "password"}
+              style={{ ...inputStyle, paddingRight: 40 }}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              title={showPassword ? "Hide password" : "Show password"}
+              style={{
+                position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+                background: "none", border: "none", color: COLORS.inkFaint, cursor: "pointer",
+                display: "flex", alignItems: "center", padding: 4,
+              }}
+            >
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
+        </div>
+        <div style={{ textAlign: "right", marginBottom: 18 }}>
+          <button
+            onClick={() => { setMode("forgot"); setResetEmail(email); setResetError(""); }}
+            style={{ background: "none", border: "none", color: COLORS.inkSoft, fontFamily: FONT_BODY, fontSize: 12, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
+          >
+            Forgot password?
+          </button>
         </div>
         {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.clayDeep, marginBottom: 14 }}>{error}</div>}
         <button
@@ -3558,6 +3782,7 @@ export default function BitAffairs() {
   const [loaded, setLoaded] = useState(false);
   const [session, setSession] = useState(null);
   const [gateStep, setGateStep] = useState("welcome");
+  const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(() => isPasswordSetupUrl());
   const [creatingProject, setCreatingProject] = useState(false);
   const [viewingQueue, setViewingQueue] = useState(false);
   const [viewingTeam, setViewingTeam] = useState(false);
@@ -3649,6 +3874,18 @@ export default function BitAffairs() {
       try {
         const plannerProfile = await getCurrentPlanner().catch(() => null);
         if (plannerProfile) {
+          // The persistent, robust check — see 0022_password_set_flag.sql.
+          // Catches exactly the case Supabase's own team warned about: a
+          // tab left open from an invite link, opened again later, after
+          // whatever URL marker existed at the callback moment is long
+          // gone. The URL-based isPasswordSetupUrl check (above, in the
+          // mount effect and auth listener) is faster for the common
+          // immediate-click case; this is what still works when that one
+          // can't.
+          if (plannerProfile.password_set === false) {
+            setPasswordRecoveryMode(true);
+            return false;
+          }
           setSession({
             type: "planner",
             orgRole: plannerProfile.role,
@@ -3696,6 +3933,13 @@ export default function BitAffairs() {
     }
     (async () => {
       try {
+        // Checked first, synchronously — see isPasswordSetupUrl's comment.
+        // A recovery/invite link already has a real session by this point,
+        // but must never silently proceed into the app on it.
+        if (isPasswordSetupUrl()) {
+          setPasswordRecoveryMode(true);
+          return;
+        }
         const { data: { session: authSession } } = await supabase.auth.getSession();
         if (authSession) await restoreSessionFromAuth();
       } catch (e) {
@@ -3705,7 +3949,19 @@ export default function BitAffairs() {
       }
     })();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, authSession) => {
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, authSession) => {
+      // A password-reset or invite email link lands here as a real auth
+      // event, not a normal sign-in. The URL check (isPasswordSetupUrl) is
+      // the reliable signal — checked first in the mount effect above, and
+      // re-checked here too since this listener can fire independently.
+      // PASSWORD_RECOVERY is kept as a backstop for the cases where it
+      // does fire correctly, not the primary mechanism — Supabase's own
+      // maintainers have confirmed SIGNED_IN can fire before it.
+      if (event === "PASSWORD_RECOVERY" || isPasswordSetupUrl()) {
+        setPasswordRecoveryMode(true);
+        setLoaded(true);
+        return;
+      }
       if (authSession) {
         await restoreSessionFromAuth();
       } else {
@@ -4078,6 +4334,28 @@ export default function BitAffairs() {
 
   if (!supabaseConfigured) {
     return <ConfigurationRequired />;
+  }
+
+  // Highest priority after the configuration check — a recovery/invite
+  // session must never fall through to the normal logged-in app, or to
+  // the normal login screen, before a password is actually set. See
+  // isPasswordSetupUrl's comment for why this is checked via the URL
+  // rather than trusted to an auth event alone.
+  if (passwordRecoveryMode) {
+    return (
+      <div style={{ minHeight: "100vh", background: COLORS.paper, color: COLORS.ink }}>
+        <style>{`${FONT_IMPORT} * { box-sizing: border-box; } input::placeholder { color: ${COLORS.inkFaint}; }`}</style>
+        <SetNewPasswordForm
+          onComplete={async () => {
+            // Strip the recovery/invite params so a refresh doesn't
+            // re-trigger this screen, then actually log the person in.
+            window.history.replaceState(null, "", window.location.pathname);
+            setPasswordRecoveryMode(false);
+            await restoreSessionFromAuth();
+          }}
+        />
+      </div>
+    );
   }
 
   const docEvent = events.find((e) => e.id === docEventId);
