@@ -46,6 +46,42 @@ export async function signInPlanner(email, password) {
   return data.session;
 }
 
+// Sends a real email via Supabase Auth with a recovery link. Clicking it
+// redirects back here with a temporary recovery session — the
+// PASSWORD_RECOVERY event on onAuthStateChange (see App.jsx) is what
+// detects that and shows the "set a new password" screen instead of just
+// signing the person into the app as-is.
+export async function requestPlannerPasswordReset(email) {
+  const { error } = await requireSupabase().auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin,
+  });
+  if (error) throw error;
+}
+
+// Only valid while a recovery session from the link above is active —
+// Supabase Auth itself enforces that, not app code. Also marks this
+// planner's password_set flag true — see 0022_password_set_flag.sql —
+// which is the persistent, non-URL-dependent signal restoreSessionFromAuth
+// actually relies on to decide whether this screen is needed at all.
+export async function updatePlannerPassword(newPassword) {
+  const { data: { user }, error: getUserError } = await requireSupabase().auth.getUser();
+  if (getUserError) throw getUserError;
+
+  const { error } = await requireSupabase().auth.updateUser({ password: newPassword });
+  if (error) throw error;
+
+  if (user) {
+    // Best-effort — if this planner doesn't have a row yet for some
+    // reason, or the flag update fails, the password itself is already
+    // set and they can still sign in; not worth failing the whole flow
+    // over a flag that only affects a future convenience check.
+    await requireSupabase().from("planners").update({ password_set: true }).eq("id", user.id).then(
+      () => {},
+      (err) => console.error("Failed to mark password_set", err)
+    );
+  }
+}
+
 export async function signOut() {
   const { error } = await requireSupabase().auth.signOut();
   if (error) throw error;
