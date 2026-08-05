@@ -469,6 +469,21 @@ export async function removePlanner(plannerId) {
   if (error) throw error;
 }
 
+// Real account deletion — planner or client, self or admin-triggered.
+// Unlike removePlanner above, this deletes the underlying Supabase Auth
+// user entirely (needs the service-role key, hence the Edge Function —
+// see delete-account/index.ts). Omit targetUserId to delete your own
+// account; pass another user's id as an admin to delete theirs. The
+// server enforces who's allowed to do which — see the function for the
+// exact rules (last-admin protection still applies either way).
+export async function deleteAccount(targetUserId) {
+  const { data, error } = await requireSupabase().functions.invoke("delete-account", {
+    body: targetUserId ? { targetUserId } : {},
+  });
+  if (error) throw new Error(await functionErrorMessage(error));
+  return data;
+}
+
 export async function assignTask(taskId, assignee) {
   const { error } = await requireSupabase().from("tasks").update({ assignee }).eq("id", taskId);
   if (error) throw error;

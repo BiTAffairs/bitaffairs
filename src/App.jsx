@@ -24,7 +24,7 @@ import {
   sendMessage as sbSendMessage, deleteMessage as sbDeleteMessage,
   addVendor as sbAddVendor, cycleVendorStatus as sbCycleVendorStatus, updateVendorPhone as sbUpdateVendorPhone,
   createEvent as sbCreateEvent, inviteClient as sbInviteClient,
-  invitePlanner, fetchTeamMembers, updatePlannerRole, removePlanner,
+  invitePlanner, fetchTeamMembers, updatePlannerRole, removePlanner, deleteAccount,
   generateClientCode, redeemClientCode, subscribeToActivity,
   savePlannerPushSubscription, saveClientPushSubscription,
   deleteEvent as sbDeleteEvent, addTask as sbAddTask, deleteTask as sbDeleteTask,
@@ -2159,7 +2159,7 @@ function NewProjectForm({ onCreate, onBack }) {
 
 /* ---------------- Admin approval queue ---------------- */
 
-function TeamManagement({ onBack, currentPlannerId }) {
+function TeamManagement({ onBack, currentPlannerId, onSelfDeleted }) {
   const [members, setMembers] = useState(null);
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
@@ -2207,6 +2207,24 @@ function TeamManagement({ onBack, currentPlannerId }) {
       setMembers((prev) => prev.filter((m) => m.id !== plannerId));
     } catch (err) {
       setError(err?.message || "Couldn't remove that team member.");
+    }
+  };
+
+  // Full account deletion — deletes the underlying login itself, not just
+  // Studio access (see removePlanner above for the lighter version). Used
+  // both for an admin deleting a teammate's account and for a member
+  // deleting their own.
+  const deleteAccountFor = async (plannerId) => {
+    setError("");
+    try {
+      await deleteAccount(plannerId === currentPlannerId ? undefined : plannerId);
+      if (plannerId === currentPlannerId) {
+        onSelfDeleted?.();
+        return;
+      }
+      setMembers((prev) => prev.filter((m) => m.id !== plannerId));
+    } catch (err) {
+      setError(err?.message || "Couldn't delete that account.");
     }
   };
 
@@ -2259,6 +2277,10 @@ function TeamManagement({ onBack, currentPlannerId }) {
                 {m.role === "admin" ? "Admin" : "Team member"}
               </button>
               {m.id !== currentPlannerId && <RemoveMemberControl onRemove={() => remove(m.id)} />}
+              <DeleteAccountControl
+                isSelf={m.id === currentPlannerId}
+                onDelete={() => deleteAccountFor(m.id)}
+              />
             </div>
           </div>
         ))}
@@ -2620,6 +2642,76 @@ function RemoveMemberControl({ onRemove }) {
       }}
     >
       <X size={15} />
+    </button>
+  );
+}
+
+// Real, irreversible account deletion — deletes the login itself, not just
+// Studio access. Requires typing DELETE to confirm, unlike the lighter
+// "remove access" control above, since there's no undo here: the auth
+// account is gone and (per 0023_account_deletion.sql) so is everything
+// scoped to just that person.
+function DeleteAccountControl({ isSelf, onDelete }) {
+  const [confirming, setConfirming] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+  if (confirming) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.clayDeep, fontWeight: 600 }}>
+          {isSelf ? "Delete your account? This can't be undone." : "Delete this account entirely? This can't be undone."}
+        </span>
+        <input
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          placeholder='Type "DELETE" to confirm'
+          style={{
+            fontFamily: FONT_BODY, fontSize: 12, padding: "5px 8px",
+            border: `1px solid ${COLORS.line}`, borderRadius: 4, background: COLORS.paper, color: COLORS.ink, outline: "none",
+            width: 150,
+          }}
+        />
+        <button
+          onClick={async () => {
+            setDeleting(true);
+            await onDelete();
+            setDeleting(false);
+          }}
+          disabled={deleting || confirmText.trim().toUpperCase() !== "DELETE"}
+          style={{
+            padding: "6px 12px", borderRadius: 4, border: "none", background: COLORS.clay, color: COLORS.card,
+            fontFamily: FONT_BODY, fontWeight: 700, fontSize: 12,
+            cursor: deleting || confirmText.trim().toUpperCase() !== "DELETE" ? "default" : "pointer",
+            opacity: confirmText.trim().toUpperCase() === "DELETE" ? 1 : 0.5,
+          }}
+        >
+          {deleting ? "Deleting…" : "Delete account"}
+        </button>
+        <button
+          onClick={() => { setConfirming(false); setConfirmText(""); }}
+          disabled={deleting}
+          style={{
+            padding: "6px 12px", borderRadius: 4, border: `1px solid ${COLORS.line}`, background: "transparent",
+            color: COLORS.inkSoft, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12, cursor: deleting ? "default" : "pointer",
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => setConfirming(true)}
+      title={isSelf ? "Delete my account" : "Delete this account entirely"}
+      style={{
+        fontFamily: FONT_BODY, fontSize: 11, fontWeight: 600, background: "none", border: "none",
+        color: COLORS.clayDeep, cursor: "pointer", padding: "4px 6px", textDecoration: "underline",
+      }}
+    >
+      {isSelf ? "Delete my account" : "Delete account"}
     </button>
   );
 }
@@ -4556,7 +4648,22 @@ export default function BitAffairs() {
 
       {!loaded ? null : role === "studio" ? (
         viewingTeam ? (
-          <TeamManagement onBack={() => setViewingTeam(false)} currentPlannerId={session?.plannerId} />
+          <TeamManagement
+            onBack={() => setViewingTeam(false)}
+            currentPlannerId={session?.plannerId}
+            onSelfDeleted={() => {
+              // Account (and session) no longer exists — just reset local
+              // state, same shape as sign-out, minus calling sbSignOut()
+              // against a user that's already gone.
+              setSession(null);
+              setGateStep("welcome");
+              setOpenEventId(null);
+              setViewingQueue(false);
+              setViewingTeam(false);
+              setEvents([]);
+              setRole("studio");
+            }}
+          />
         ) : viewingQueue ? (
           <AdminQueue
             events={events}
