@@ -1861,7 +1861,7 @@ function VendorsView({ vendors, onAddVendor, onCycleStatus, onUpdatePhone, onUpd
 
   return (
     <SectionCard>
-      <SectionTitle>VENDORS/PAYMENTS</SectionTitle>
+      <SectionTitle>Vendors/Payment</SectionTitle>
       {vendors.length === 0 && (
         <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkFaint, marginBottom: 16 }}>
           No vendors added yet.
@@ -3112,7 +3112,7 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
           ["overview", "Overview", ListChecks],
           ["proposal", "Proposal", FileText],
           ["approvals", "Approvals", Stamp],
-          ["vendors", "VENDORS/PAYMENTS", Truck],
+          ["vendors", "Vendors/Payment", Truck],
           ["messages", "Messages", MessageCircle],
           ["budget", "Budget", Wallet],
           ["payments", "Client payments", Banknote],
