@@ -160,7 +160,7 @@ export async function fetchEvents() {
 }
 
 export async function fetchEventDetail(eventId) {
-  const [phases, tasks, proposal, proposalItems, approvals, vendors, budgetItems, messages, members, taskRequests] = await Promise.all([
+  const [phases, tasks, proposal, proposalItems, approvals, vendors, budgetItems, clientPayments, messages, members, taskRequests] = await Promise.all([
     requireSupabase().from("phases").select("*").eq("event_id", eventId).order("position"),
     requireSupabase().from("tasks").select("*").in(
       "phase_id",
@@ -171,6 +171,7 @@ export async function fetchEventDetail(eventId) {
     requireSupabase().from("approvals").select("*").eq("event_id", eventId).order("requested_at"),
     requireSupabase().from("vendors").select("*").eq("event_id", eventId), // clients can read these too — see 0009_client_vendors_budget.sql
     requireSupabase().from("budget_items").select("*").eq("event_id", eventId), // clients can read these too — see 0009_client_vendors_budget.sql
+    requireSupabase().from("client_payments").select("*").eq("event_id", eventId).order("date_sent", { ascending: false }), // clients can read these too — see 0025_client_payments.sql
     requireSupabase().from("messages").select("*").eq("event_id", eventId).order("created_at"),
     // planner_id is required here (not just email/display_name) so the UI
     // can appoint specific people to a restricted task — see task_assignees.
@@ -196,6 +197,7 @@ export async function fetchEventDetail(eventId) {
     approvals: approvals.data ?? [],
     vendors: vendors.data ?? [],
     budgetItems: budgetItems.data ?? [],
+    clientPayments: clientPayments.data ?? [],
     messages: messages.data ?? [],
     members: members.data ?? [],
     taskRequests: taskRequests.data ?? [],
@@ -507,8 +509,55 @@ export async function updateVendorPhone(vendorId, phone) {
   if (error) throw error;
 }
 
+// Full edit — name, category, contact — for correcting a vendor's details
+// after creation, same as phone/cost/deposit above.
+export async function updateVendorDetails(vendorId, { name, category, contact }) {
+  const { error } = await requireSupabase().from("vendors").update({ name, category, contact }).eq("id", vendorId);
+  if (error) throw error;
+}
+
+// No other table references vendors by foreign key, so this is a plain
+// delete — nothing else to cascade or clean up.
+export async function deleteVendor(vendorId) {
+  const { error } = await requireSupabase().from("vendors").delete().eq("id", vendorId);
+  if (error) throw error;
+}
+
+// Cost is editable after creation — vendor prices routinely change as
+// quotes firm up. The deposit check constraint (0024_vendor_deposit.sql)
+// means Postgres itself will reject dropping cost below an already-
+// recorded deposit, so the error from that needs to reach the caller
+// intact rather than being swallowed.
+export async function updateVendorCost(vendorId, cost) {
+  const { error } = await requireSupabase().from("vendors").update({ cost }).eq("id", vendorId);
+  if (error) throw error;
+}
+
+// Deposit is entered after the vendor already exists, not at creation —
+// same DB-level guard applies here (deposit can't exceed cost).
+export async function updateVendorDeposit(vendorId, deposit) {
+  const { error } = await requireSupabase().from("vendors").update({ deposit }).eq("id", vendorId);
+  if (error) throw error;
+}
+
 export async function cycleVendorStatus(vendorId, nextStatus) {
   const { error } = await requireSupabase().from("vendors").update({ status: nextStatus }).eq("id", vendorId);
+  if (error) throw error;
+}
+
+// Client payments — money the client has sent the agency (0025_client_payments.sql).
+// Planner-only writes; clients can read their own event's log but not add
+// to it themselves, since this is the agency's record of what it actually
+// received, not a self-report.
+export async function addClientPayment(eventId, amount, dateSent) {
+  const { error } = await requireSupabase()
+    .from("client_payments")
+    .insert({ event_id: eventId, amount, date_sent: dateSent });
+  if (error) throw error;
+}
+
+export async function deleteClientPayment(paymentId) {
+  const { error } = await requireSupabase().from("client_payments").delete().eq("id", paymentId);
   if (error) throw error;
 }
 

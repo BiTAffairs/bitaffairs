@@ -3,7 +3,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Users, Calendar, MapPin,
   Circle, CheckCircle2, Send, Stamp, FileText, Lock,
   Wallet, ListChecks, Eye, EyeOff, Building2, Truck, Printer, Mail, Phone, Bell, BellOff, Pencil,
-  MessageCircle, ImagePlus
+  MessageCircle, ImagePlus, Banknote
 } from "lucide-react";
 import {
   supabase, supabaseConfigured,
@@ -23,6 +23,9 @@ import {
   clientApproveMilestone as sbClientApproveMilestone, clientDisapproveMilestone as sbClientDisapproveMilestone,
   sendMessage as sbSendMessage, deleteMessage as sbDeleteMessage,
   addVendor as sbAddVendor, cycleVendorStatus as sbCycleVendorStatus, updateVendorPhone as sbUpdateVendorPhone,
+  updateVendorCost as sbUpdateVendorCost, updateVendorDeposit as sbUpdateVendorDeposit,
+  updateVendorDetails as sbUpdateVendorDetails, deleteVendor as sbDeleteVendor,
+  addClientPayment as sbAddClientPayment, deleteClientPayment as sbDeleteClientPayment,
   createEvent as sbCreateEvent, inviteClient as sbInviteClient,
   invitePlanner, fetchTeamMembers, updatePlannerRole, removePlanner, deleteAccount,
   generateClientCode, redeemClientCode, subscribeToActivity,
@@ -1334,11 +1337,23 @@ function TaskRequestRow({ request, phases, isAdmin, onApprove, onDismiss }) {
 
 /* ---------------- Budget ---------------- */
 
-function BudgetView({ budget, vendors }) {
-  const vendorSpend = (vendors || []).filter((v) => v.status === "confirmed").reduce((s, v) => s + v.cost, 0);
+function BudgetView({ budget, vendors, clientPayments }) {
+  // "Paid to confirmed vendors" reflects actual money out the door — the
+  // deposit, not the full contract price (0024_vendor_deposit.sql). A
+  // vendor confirmed at ₦500,000 with a ₦100,000 deposit only counts as
+  // ₦100,000 spent here; the remaining ₦400,000 shows on their own line
+  // as balance owed, not as budget already spent.
+  const vendorSpend = (vendors || []).filter((v) => v.status === "confirmed").reduce((s, v) => s + (v.deposit || 0), 0);
   const remaining = budget.total - vendorSpend;
   const overBudget = remaining < 0;
   const pct = budget.total > 0 ? Math.round((vendorSpend / budget.total) * 100) : 0;
+  // Money IN from the client (0025_client_payments.sql) — shown alongside
+  // vendor spend for a fuller picture, but deliberately not folded into
+  // the "Remaining" figure above: that's budget-vs-spend (an internal
+  // planning number), while this is cash actually received, a separate
+  // concern. Conflating the two would make "Remaining" mean two different
+  // things depending on whether a client had paid recently.
+  const totalReceived = (clientPayments || []).reduce((s, p) => s + p.amount, 0);
 
   return (
     <SectionCard>
@@ -1358,7 +1373,7 @@ function BudgetView({ budget, vendors }) {
       <div
         style={{
           display: "flex", justifyContent: "space-between", padding: "10px 12px", borderRadius: 4,
-          background: overBudget ? COLORS.clayPale : COLORS.paper, marginBottom: 20,
+          background: overBudget ? COLORS.clayPale : COLORS.paper, marginBottom: 10,
           fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700,
         }}
       >
@@ -1366,6 +1381,18 @@ function BudgetView({ budget, vendors }) {
         <span style={{ fontFamily: FONT_MONO, color: overBudget ? COLORS.clayDeep : COLORS.ink }}>
           {overBudget ? `-${currency(Math.abs(remaining))}` : currency(remaining)}
         </span>
+      </div>
+      <div
+        style={{
+          display: "flex", justifyContent: "space-between", padding: "10px 12px", borderRadius: 4,
+          background: COLORS.paper, marginBottom: 20,
+          fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700,
+        }}
+      >
+        <span style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.ink }}>
+          <Banknote size={14} /> Received from client
+        </span>
+        <span style={{ fontFamily: FONT_MONO, color: COLORS.ink }}>{currency(totalReceived)}</span>
       </div>
       {budget.items.length > 0 && (
         <>
@@ -1396,6 +1423,128 @@ function BudgetView({ budget, vendors }) {
   );
 }
 
+/* ---------------- Client payments ---------------- */
+
+// Money the client has sent the agency (0025_client_payments.sql) — the
+// inbound half of the cash picture, separate from vendors.deposit (money
+// paid OUT). Planners log entries; clients see the same list read-only,
+// same pattern as VendorsView's readOnly mode.
+function ClientPaymentsView({ payments, onAdd, onDelete, readOnly = false }) {
+  const [amount, setAmount] = useState("");
+  const [dateSent, setDateSent] = useState(() => new Date().toISOString().slice(0, 10));
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const total = (payments || []).reduce((s, p) => s + p.amount, 0);
+
+  const submit = async () => {
+    const amt = Number(amount);
+    if (!amount || isNaN(amt) || amt <= 0) {
+      setError("Enter an amount greater than zero.");
+      return;
+    }
+    if (!dateSent) {
+      setError("Pick a date.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onAdd(amt, dateSent);
+      setAmount("");
+      setDateSent(new Date().toISOString().slice(0, 10));
+    } catch (err) {
+      setError(err?.message || "Couldn't save that payment.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SectionCard>
+      <SectionTitle>Client payments</SectionTitle>
+      <div
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 4,
+          background: COLORS.paper, marginBottom: 20, fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700,
+        }}
+      >
+        <span style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.ink }}>
+          <Banknote size={14} /> Total received
+        </span>
+        <span style={{ fontFamily: FONT_MONO, color: COLORS.ink }}>{currency(total)}</span>
+      </div>
+
+      {!readOnly && (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 20, flexWrap: "wrap" }}>
+          <input
+            type="number"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="Amount"
+            style={{
+              fontFamily: FONT_MONO, fontSize: 13, padding: "8px 10px", border: `1px solid ${COLORS.line}`,
+              borderRadius: 4, background: COLORS.card, color: COLORS.ink, outline: "none", width: 120,
+            }}
+          />
+          <input
+            type="date"
+            value={dateSent}
+            onChange={(e) => setDateSent(e.target.value)}
+            style={{
+              fontFamily: FONT_BODY, fontSize: 13, padding: "8px 10px", border: `1px solid ${COLORS.line}`,
+              borderRadius: 4, background: COLORS.card, color: COLORS.ink, outline: "none",
+            }}
+          />
+          <button
+            onClick={submit}
+            disabled={saving}
+            style={{
+              display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 4, border: "none",
+              background: COLORS.ink, color: COLORS.card, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
+              cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1,
+            }}
+          >
+            <Plus size={14} /> {saving ? "Adding…" : "Add payment"}
+          </button>
+        </div>
+      )}
+      {error && (
+        <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.clayDeep, marginTop: -12, marginBottom: 16 }}>{error}</div>
+      )}
+
+      {(payments || []).length === 0 ? (
+        <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkFaint }}>No payments logged yet.</div>
+      ) : (
+        (payments || []).map((p, i) => (
+          <div
+            key={p.id}
+            style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0",
+              borderBottom: i < payments.length - 1 ? `1px solid ${COLORS.line}` : "none",
+              fontFamily: FONT_BODY, fontSize: 13,
+            }}
+          >
+            <span style={{ color: COLORS.inkSoft }}>{p.dateSent}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontFamily: FONT_MONO, color: COLORS.ink, fontWeight: 600 }}>{currency(p.amount)}</span>
+              {!readOnly && (
+                <button
+                  onClick={() => onDelete(p.id)}
+                  title="Delete this entry"
+                  style={{ display: "flex", alignItems: "center", background: "none", border: "none", color: COLORS.inkFaint, cursor: "pointer", padding: 4 }}
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+        ))
+      )}
+    </SectionCard>
+  );
+}
+
 /* ---------------- Vendors ---------------- */
 
 function vendorStatusTag(status) {
@@ -1407,7 +1556,267 @@ function vendorStatusTag(status) {
   return map[status] || map.inquiry;
 }
 
-function VendorsView({ vendors, onAddVendor, onCycleStatus, onUpdatePhone, readOnly = false }) {
+// A single inline-editable money value — used for vendor cost (editable any
+// time, since prices are subject to change) and deposit (entered after the
+// vendor already exists). Reverts on failure so a rejected save — e.g. a
+// deposit that would exceed the vendor's cost, blocked at the DB level by
+// 0024_vendor_deposit.sql's check constraint — doesn't leave the field
+// showing a value that was never actually saved.
+function VendorMoneyField({ value, onSave }) {
+  const [editValue, setEditValue] = useState(String(value));
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { setEditValue(String(value)); }, [value]);
+
+  const commit = async () => {
+    const next = Math.max(0, Number(editValue) || 0);
+    if (next === value) return;
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(next);
+    } catch (err) {
+      setError(
+        err?.code === "23514" || String(err?.message || "").includes("constraint")
+          ? "Can't exceed the vendor's price."
+          : "Couldn't save — try again."
+      );
+      setEditValue(String(value));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end" }}>
+      <input
+        type="number"
+        value={editValue}
+        onChange={(e) => setEditValue(e.target.value)}
+        onBlur={commit}
+        disabled={saving}
+        style={{
+          fontFamily: FONT_MONO, fontSize: 13, color: COLORS.inkSoft, background: "none",
+          border: "none", outline: "none", padding: 0, width: 90, textAlign: "right",
+        }}
+      />
+      {error && <span style={{ fontFamily: FONT_BODY, fontSize: 10, color: COLORS.clayDeep, whiteSpace: "nowrap" }}>{error}</span>}
+    </div>
+  );
+}
+
+// A single vendor row — display mode, edit mode (name/category/contact),
+// and a delete-with-confirm action. Phone/cost/deposit keep their own
+// existing inline-edit behavior (VendorMoneyField, the phone input)
+// unchanged; edit mode here only covers the three fields that previously
+// had no way to be corrected after a vendor was created.
+function VendorRow({ vendor: v, readOnly, onCycleStatus, onUpdatePhone, onUpdateCost, onUpdateDeposit, onUpdateDetails, onDelete }) {
+  const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [name, setName] = useState(v.name);
+  const [category, setCategory] = useState(v.category || "");
+  const [contact, setContact] = useState(v.contact || "");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const tag = vendorStatusTag(v.status);
+
+  const saveEdit = async () => {
+    if (!name.trim() || !category.trim()) {
+      setError("Vendor name and category are required.");
+      return;
+    }
+    if (contact.trim() && !isPlausibleEmail(contact)) {
+      setError("That contact email doesn't look right — double check it.");
+      return;
+    }
+    setError("");
+    setSaving(true);
+    try {
+      await onUpdateDetails({
+        name: clampText(name, LIMITS.shortText),
+        category: clampText(category, LIMITS.shortText),
+        contact: clampText(contact, LIMITS.shortText),
+      });
+      setEditing(false);
+    } catch (err) {
+      setError(err?.message || "Couldn't save those changes.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cancelEdit = () => {
+    setName(v.name);
+    setCategory(v.category || "");
+    setContact(v.contact || "");
+    setError("");
+    setEditing(false);
+  };
+
+  const inputStyle = {
+    fontFamily: FONT_BODY, fontSize: 13, padding: "7px 10px", border: `1px solid ${COLORS.line}`,
+    borderRadius: 4, background: COLORS.card, color: COLORS.ink, outline: "none", width: "100%",
+  };
+
+  if (editing) {
+    return (
+      <div style={{ padding: "14px 0", borderBottom: `1px solid ${COLORS.line}` }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="Vendor name" />
+          <input style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Category" />
+          <input style={{ ...inputStyle, gridColumn: "1 / -1" }} value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Contact email" />
+        </div>
+        {error && <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.clayDeep, marginTop: 8 }}>{error}</div>}
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button
+            onClick={saveEdit}
+            disabled={saving}
+            style={{
+              padding: "7px 14px", borderRadius: 4, border: "none", background: COLORS.ink, color: COLORS.card,
+              fontFamily: FONT_BODY, fontWeight: 700, fontSize: 12, cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1,
+            }}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+          <button
+            onClick={cancelEdit}
+            disabled={saving}
+            style={{
+              padding: "7px 14px", borderRadius: 4, border: `1px solid ${COLORS.line}`, background: "transparent",
+              color: COLORS.inkSoft, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12, cursor: saving ? "default" : "pointer",
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16,
+        padding: "14px 0", borderBottom: `1px solid ${COLORS.line}`, flexWrap: "wrap",
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 600, color: COLORS.ink }}>{v.name}</span>
+          {!readOnly && (
+            <button
+              onClick={() => setEditing(true)}
+              title="Edit vendor"
+              style={{ display: "flex", alignItems: "center", background: "none", border: "none", color: COLORS.inkFaint, cursor: "pointer", padding: 2 }}
+            >
+              <Pencil size={12} />
+            </button>
+          )}
+        </div>
+        <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>{v.category}</div>
+        {v.contact && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4, fontFamily: FONT_MONO, fontSize: 11, color: COLORS.inkFaint, marginTop: 4 }}>
+            <Mail size={11} /> {v.contact}
+          </div>
+        )}
+        {(v.phone || !readOnly) && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
+            <Phone size={11} color={COLORS.inkFaint} />
+            {readOnly ? (
+              <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.inkFaint }}>{v.phone}</span>
+            ) : (
+              <input
+                defaultValue={v.phone || ""}
+                placeholder="Add phone number"
+                onBlur={(e) => {
+                  const next = clampText(e.target.value, LIMITS.shortText);
+                  if (next !== (v.phone || "")) onUpdatePhone(next);
+                }}
+                style={{
+                  fontFamily: FONT_MONO, fontSize: 11, color: COLORS.inkFaint, background: "none",
+                  border: "none", outline: "none", padding: 0, width: 130,
+                }}
+              />
+            )}
+          </div>
+        )}
+      </div>
+      <div style={{ fontFamily: FONT_MONO, fontSize: 13, color: COLORS.inkSoft, minWidth: 100, textAlign: "right" }}>
+        {readOnly ? currency(v.cost) : <VendorMoneyField value={v.cost} onSave={onUpdateCost} />}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 100, textAlign: "right" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
+          <span style={{ fontFamily: FONT_BODY, fontSize: 10, color: COLORS.inkFaint }}>Deposit</span>
+          {readOnly ? (
+            <span style={{ fontFamily: FONT_MONO, fontSize: 12, color: COLORS.inkSoft }}>{currency(v.deposit || 0)}</span>
+          ) : (
+            <VendorMoneyField value={v.deposit || 0} onSave={onUpdateDeposit} />
+          )}
+        </div>
+        <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: COLORS.inkFaint }}>
+          Balance {currency(Math.max(0, v.cost - (v.deposit || 0)))}
+        </div>
+      </div>
+      {readOnly ? (
+        <span
+          style={{
+            fontFamily: FONT_BODY, fontSize: 11, fontWeight: 600, padding: "4px 10px",
+            borderRadius: 999, background: tag.bg, color: tag.fg, whiteSpace: "nowrap",
+          }}
+        >
+          {tag.label}
+        </span>
+      ) : (
+        <button
+          onClick={onCycleStatus}
+          style={{
+            fontFamily: FONT_BODY, fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 999,
+            background: tag.bg, color: tag.fg, border: "none", cursor: "pointer", whiteSpace: "nowrap",
+          }}
+          title="Click to change status"
+        >
+          {tag.label}
+        </button>
+      )}
+      {!readOnly && (
+        confirmingDelete ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button
+              onClick={onDelete}
+              style={{
+                padding: "5px 10px", borderRadius: 4, border: "none", background: COLORS.clay, color: COLORS.card,
+                fontFamily: FONT_BODY, fontWeight: 700, fontSize: 11, cursor: "pointer",
+              }}
+            >
+              Confirm
+            </button>
+            <button
+              onClick={() => setConfirmingDelete(false)}
+              style={{
+                padding: "5px 10px", borderRadius: 4, border: `1px solid ${COLORS.line}`, background: "transparent",
+                color: COLORS.inkSoft, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 11, cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirmingDelete(true)}
+            title="Delete vendor"
+            style={{ display: "flex", alignItems: "center", background: "none", border: "none", color: COLORS.inkFaint, cursor: "pointer", padding: 4 }}
+          >
+            <X size={15} />
+          </button>
+        )
+      )}
+    </div>
+  );
+}
+
+function VendorsView({ vendors, onAddVendor, onCycleStatus, onUpdatePhone, onUpdateCost, onUpdateDeposit, onUpdateDetails, onDeleteVendor, readOnly = false }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [contact, setContact] = useState("");
@@ -1452,92 +1861,25 @@ function VendorsView({ vendors, onAddVendor, onCycleStatus, onUpdatePhone, readO
 
   return (
     <SectionCard>
-      <SectionTitle>Vendors</SectionTitle>
+      <SectionTitle>VENDORS/PAYMENTS</SectionTitle>
       {vendors.length === 0 && (
         <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkFaint, marginBottom: 16 }}>
           No vendors added yet.
         </div>
       )}
-      {vendors.map((v) => {
-        const tag = vendorStatusTag(v.status);
-        return (
-          <div
-            key={v.id}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 16,
-              padding: "14px 0",
-              borderBottom: `1px solid ${COLORS.line}`,
-              flexWrap: "wrap",
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <div style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 600, color: COLORS.ink }}>{v.name}</div>
-              <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>{v.category}</div>
-              {v.contact && (
-                <div style={{ display: "flex", alignItems: "center", gap: 4, fontFamily: FONT_MONO, fontSize: 11, color: COLORS.inkFaint, marginTop: 4 }}>
-                  <Mail size={11} /> {v.contact}
-                </div>
-              )}
-              {(v.phone || !readOnly) && (
-                <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
-                  <Phone size={11} color={COLORS.inkFaint} />
-                  {readOnly ? (
-                    <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.inkFaint }}>{v.phone}</span>
-                  ) : (
-                    <input
-                      defaultValue={v.phone || ""}
-                      placeholder="Add phone number"
-                      onBlur={(e) => {
-                        const next = clampText(e.target.value, LIMITS.shortText);
-                        if (next !== (v.phone || "")) onUpdatePhone(v.id, next);
-                      }}
-                      style={{
-                        fontFamily: FONT_MONO, fontSize: 11, color: COLORS.inkFaint, background: "none",
-                        border: "none", outline: "none", padding: 0, width: 130,
-                      }}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-            <div style={{ fontFamily: FONT_MONO, fontSize: 13, color: COLORS.inkSoft, minWidth: 100, textAlign: "right" }}>
-              {currency(v.cost)}
-            </div>
-            {readOnly ? (
-              <span
-                style={{
-                  fontFamily: FONT_BODY, fontSize: 11, fontWeight: 600, padding: "4px 10px",
-                  borderRadius: 999, background: tag.bg, color: tag.fg, whiteSpace: "nowrap",
-                }}
-              >
-                {tag.label}
-              </span>
-            ) : (
-              <button
-                onClick={() => onCycleStatus(v.id)}
-                style={{
-                  fontFamily: FONT_BODY,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  padding: "4px 10px",
-                  borderRadius: 999,
-                  background: tag.bg,
-                  color: tag.fg,
-                  border: "none",
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                }}
-                title="Click to change status"
-              >
-                {tag.label}
-              </button>
-            )}
-          </div>
-        );
-      })}
+      {vendors.map((v) => (
+        <VendorRow
+          key={v.id}
+          vendor={v}
+          readOnly={readOnly}
+          onCycleStatus={() => onCycleStatus(v.id)}
+          onUpdatePhone={(next) => onUpdatePhone(v.id, next)}
+          onUpdateCost={(next) => onUpdateCost(v.id, next)}
+          onUpdateDeposit={(next) => onUpdateDeposit(v.id, next)}
+          onUpdateDetails={(details) => onUpdateDetails(v.id, details)}
+          onDelete={() => onDeleteVendor(v.id)}
+        />
+      ))}
 
       {!readOnly && (
         <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px dashed ${COLORS.line}` }}>
@@ -2716,7 +3058,7 @@ function DeleteAccountControl({ isSelf, onDelete }) {
   );
 }
 
-function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask, onAddTask, onDeleteTask, onSubmitProposalReview, onSendProposal, onRejectProposal, onResetProposal, onOpenDocument, onAddProposalItem, onUpdateProposalItem, onDeleteProposalItem, onRequestApproval, onReleaseApproval, onEditApproval, onDeleteApproval, onAddVendor, onCycleVendorStatus, onUpdateVendorPhone, onSendMessage, onDeleteMessage, onPreviewClient, onDeleteProject, onApproveTaskRequest, onDismissTaskRequest }) {
+function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask, onAddTask, onDeleteTask, onSubmitProposalReview, onSendProposal, onRejectProposal, onResetProposal, onOpenDocument, onAddProposalItem, onUpdateProposalItem, onDeleteProposalItem, onRequestApproval, onReleaseApproval, onEditApproval, onDeleteApproval, onAddVendor, onCycleVendorStatus, onUpdateVendorPhone, onUpdateVendorCost, onUpdateVendorDeposit, onUpdateVendorDetails, onDeleteVendor, onAddClientPayment, onDeleteClientPayment, onSendMessage, onDeleteMessage, onPreviewClient, onDeleteProject, onApproveTaskRequest, onDismissTaskRequest }) {
   const [tab, setTab] = useState("overview");
   const pct = progressOf(event);
 
@@ -2770,9 +3112,10 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
           ["overview", "Overview", ListChecks],
           ["proposal", "Proposal", FileText],
           ["approvals", "Approvals", Stamp],
-          ["vendors", "Vendors", Truck],
+          ["vendors", "VENDORS/PAYMENTS", Truck],
           ["messages", "Messages", MessageCircle],
           ["budget", "Budget", Wallet],
+          ["payments", "Client payments", Banknote],
         ].map(([key, label, Icon]) => (
           <button
             key={key}
@@ -2839,7 +3182,7 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
         <ApprovalsList approvals={event.approvals} editable isAdmin={isAdmin} onRequest={onRequestApproval} onRelease={onReleaseApproval} onEdit={onEditApproval} onDelete={onDeleteApproval} />
       )}
       {tab === "vendors" && (
-        <VendorsView vendors={event.vendors || []} onAddVendor={onAddVendor} onCycleStatus={onCycleVendorStatus} onUpdatePhone={onUpdateVendorPhone} />
+        <VendorsView vendors={event.vendors || []} onAddVendor={onAddVendor} onCycleStatus={onCycleVendorStatus} onUpdatePhone={onUpdateVendorPhone} onUpdateCost={onUpdateVendorCost} onUpdateDeposit={onUpdateVendorDeposit} onUpdateDetails={onUpdateVendorDetails} onDeleteVendor={onDeleteVendor} />
       )}
       {tab === "messages" && (
         <MessageThread
@@ -2853,7 +3196,14 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
           ]}
         />
       )}
-      {tab === "budget" && <BudgetView budget={event.budget} vendors={event.vendors} />}
+      {tab === "budget" && <BudgetView budget={event.budget} vendors={event.vendors} clientPayments={event.clientPayments} />}
+      {tab === "payments" && (
+        <ClientPaymentsView
+          payments={event.clientPayments || []}
+          onAdd={(amount, dateSent) => onAddClientPayment(amount, dateSent)}
+          onDelete={onDeleteClientPayment}
+        />
+      )}
     </div>
   );
 }
@@ -2948,7 +3298,9 @@ function ClientPortal({ event, onToggleTask, onApproveProposal, onDisapproveProp
 
         <VendorsView vendors={event.vendors || []} readOnly />
 
-        <BudgetView budget={event.budget} vendors={event.vendors} />
+        <BudgetView budget={event.budget} vendors={event.vendors} clientPayments={event.clientPayments} />
+
+        <ClientPaymentsView payments={event.clientPayments || []} readOnly />
 
         <MessageThread
           messages={event.messages || []}
@@ -4384,6 +4736,68 @@ export default function BitAffairs() {
     }
   };
 
+  const handleUpdateVendorCost = async (eventId, vendorId, cost) => {
+    try {
+      await sbUpdateVendorCost(vendorId, cost);
+      await refreshEvent(eventId);
+    } catch (err) {
+      // Most likely cause: lowering cost below an already-recorded
+      // deposit — the DB check constraint rejects that (0024_vendor_deposit.sql).
+      console.error("Failed to update vendor cost", err);
+      throw err;
+    }
+  };
+
+  const handleUpdateVendorDeposit = async (eventId, vendorId, deposit) => {
+    try {
+      await sbUpdateVendorDeposit(vendorId, deposit);
+      await refreshEvent(eventId);
+    } catch (err) {
+      // Most likely cause: deposit exceeds the vendor's cost — rejected
+      // at the DB level (0024_vendor_deposit.sql).
+      console.error("Failed to update vendor deposit", err);
+      throw err;
+    }
+  };
+
+  const handleUpdateVendorDetails = async (eventId, vendorId, details) => {
+    try {
+      await sbUpdateVendorDetails(vendorId, details);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to update vendor details", err);
+      throw err;
+    }
+  };
+
+  const handleDeleteVendor = async (eventId, vendorId) => {
+    try {
+      await sbDeleteVendor(vendorId);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to delete vendor", err);
+    }
+  };
+
+  const handleAddClientPayment = async (eventId, amount, dateSent) => {
+    try {
+      await sbAddClientPayment(eventId, amount, dateSent);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to add client payment", err);
+      throw err;
+    }
+  };
+
+  const handleDeleteClientPayment = async (eventId, paymentId) => {
+    try {
+      await sbDeleteClientPayment(paymentId);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to delete client payment", err);
+    }
+  };
+
   const handleSendMessage = async (eventId, message) => {
     try {
       await sbSendMessage(eventId, message.authorType, message.authorName, message.body, message.imageData);
@@ -4699,6 +5113,12 @@ export default function BitAffairs() {
             onAddVendor={(vendor) => handleAddVendor(openEvent.id, vendor)}
             onCycleVendorStatus={(vendorId) => handleCycleVendorStatus(openEvent.id, vendorId)}
             onUpdateVendorPhone={(vendorId, phone) => handleUpdateVendorPhone(openEvent.id, vendorId, phone)}
+            onUpdateVendorCost={(vendorId, cost) => handleUpdateVendorCost(openEvent.id, vendorId, cost)}
+            onUpdateVendorDeposit={(vendorId, deposit) => handleUpdateVendorDeposit(openEvent.id, vendorId, deposit)}
+            onUpdateVendorDetails={(vendorId, details) => handleUpdateVendorDetails(openEvent.id, vendorId, details)}
+            onDeleteVendor={(vendorId) => handleDeleteVendor(openEvent.id, vendorId)}
+            onAddClientPayment={(amount, dateSent) => handleAddClientPayment(openEvent.id, amount, dateSent)}
+            onDeleteClientPayment={(paymentId) => handleDeleteClientPayment(openEvent.id, paymentId)}
             onSendMessage={(message) => handleSendMessage(openEvent.id, message)}
             onDeleteMessage={(messageId) => handleDeleteMessage(openEvent.id, messageId)}
             onPreviewClient={() => {

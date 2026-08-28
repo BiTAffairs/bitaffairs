@@ -76,7 +76,12 @@ export function assembleEventFromSupabase(eventRow, detail) {
       status: a.status, requestedAt: a.requested_at, approvedAt: a.approved_at, disapprovedAt: a.disapproved_at,
     })),
     vendors: detail.vendors.map((v) => ({
-      id: v.id, name: v.name, category: v.category, contact: v.contact, phone: v.phone, cost: v.cost, status: v.status,
+      id: v.id, name: v.name, category: v.category, contact: v.contact, phone: v.phone, cost: v.cost, deposit: v.deposit || 0, status: v.status,
+    })),
+    // 0025_client_payments.sql — money the client has sent the agency,
+    // newest first (already ordered that way by the fetch).
+    clientPayments: (detail.clientPayments || []).map((p) => ({
+      id: p.id, amount: p.amount, dateSent: p.date_sent,
     })),
     messages: detail.messages.map((m) => ({
       id: m.id, authorType: m.author_type, authorName: m.author_name,

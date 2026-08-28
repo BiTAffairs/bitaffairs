@@ -66,6 +66,34 @@ serve(async (req) => {
 
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
+    // Last-admin protection, checked explicitly here rather than relying
+    // solely on the DB trigger (0023_account_deletion.sql). The trigger
+    // still fires either way as a real safety net, but a Postgres
+    // exception raised mid-cascade from the Admin API's deleteUser() call
+    // isn't a path this app has ever exercised before — better to give a
+    // clean, predictable error here than hope GoTrue's wrapping preserves
+    // the trigger's message intact.
+    const { data: targetAsPlanner } = await adminClient
+      .from("planners")
+      .select("organization_id, role")
+      .eq("id", targetUserId)
+      .maybeSingle();
+
+    if (targetAsPlanner?.role === "admin") {
+      const { count } = await adminClient
+        .from("planners")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", targetAsPlanner.organization_id)
+        .eq("role", "admin")
+        .neq("id", targetUserId);
+      if (!count) {
+        return jsonResponse(
+          { error: "Cannot delete the last admin in an organization. Promote another teammate to admin first." },
+          400
+        );
+      }
+    }
+
     if (!isSelf) {
       // Admin-triggered: caller must be an admin planner.
       const { data: callerPlanner } = await adminClient
@@ -77,15 +105,10 @@ serve(async (req) => {
         return jsonResponse({ error: "Only an admin can delete another account" }, 403);
       }
 
-      // Is the target a planner in the caller's org?
-      const { data: targetPlanner } = await adminClient
-        .from("planners")
-        .select("organization_id")
-        .eq("id", targetUserId)
-        .maybeSingle();
-
-      if (targetPlanner) {
-        if (targetPlanner.organization_id !== callerPlanner.organization_id) {
+      // Is the target a planner in the caller's org? (already fetched
+      // above as targetAsPlanner, for the last-admin check.)
+      if (targetAsPlanner) {
+        if (targetAsPlanner.organization_id !== callerPlanner.organization_id) {
           return jsonResponse({ error: "That account isn't in your organization" }, 403);
         }
       } else {
