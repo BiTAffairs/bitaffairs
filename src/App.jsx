@@ -3871,7 +3871,7 @@ function GenerateAccessCode({ eventId }) {
       {error && <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: COLORS.clayDeep, marginTop: 8 }}>{error}</div>}
       {code && (
         <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: COLORS.inkFaint, marginTop: 8 }}>
-          Give this code to your client — no email needed. Valid 30 days. Generating a new code replaces this one.
+          Give this code to your client — no email needed. Valid 10 minutes. Generating a new code replaces this one.
         </div>
       )}
     </div>
