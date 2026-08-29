@@ -29,10 +29,20 @@ const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 // Without this, supabase-js's functions.invoke() fails with a generic
 // "Failed to send a request to the Edge Function" and never even reaches
 // the actual error handling below.
+// Locked to the app's own origin rather than "*" — this function is only
+// ever meant to be called from the deployed app itself, not from any
+// arbitrary webpage that happens to have gotten hold of someone's token.
+// Reuses the same APP_URL secret already set for invite-email redirects
+// (see invite-planner/invite-client) rather than introducing a new one.
+// Falls back to "*" only if APP_URL somehow isn't set, so a missing
+// secret degrades to the old (less safe) behavior instead of breaking
+// the function outright.
+const allowedOrigin = Deno.env.get("APP_URL") || "*";
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": allowedOrigin,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Vary": "Origin",
 };
 
 serve(async (req) => {
@@ -83,6 +93,23 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Rate limit — see 0029_invite_rate_limit.sql. Shared across
+    // invite-planner and invite-client: what matters is this caller's
+    // total invite volume, not which endpoint they used.
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { count: recentInvites } = await adminClient
+      .from("invite_attempts")
+      .select("id", { count: "exact", head: true })
+      .eq("caller_id", user.id)
+      .gte("attempted_at", oneHourAgo);
+    if ((recentInvites || 0) >= 20) {
+      return new Response(JSON.stringify({ error: "Too many invites sent recently — try again in a bit." }), {
+        status: 429,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    await adminClient.from("invite_attempts").insert({ caller_id: user.id });
 
     // Record the invite. The client's actual auth.users row gets created the
     // moment they click the magic link Supabase Auth emails them — we don't

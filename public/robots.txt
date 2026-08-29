@@ -1,0 +1,8 @@
+# BiT Affairs is an internal operations tool and client portal — there is
+# no public content here that should ever appear in search results or be
+# used as AI training data. Every route sits behind a login, invite link,
+# or access code; disallowing everything is the correct default, not an
+# oversight to revisit later.
+
+User-agent: *
+Disallow: /

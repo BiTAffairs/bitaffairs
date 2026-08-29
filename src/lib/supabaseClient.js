@@ -436,13 +436,17 @@ export async function generateClientCode(eventId) {
 
 // Anonymous sign-in must be enabled in the Supabase dashboard (Authentication
 // → Providers → Anonymous Sign-ins) or this will fail with a clear error.
+// The actual code check happens in the redeem-code Edge Function, not a
+// direct RPC call — see 0028_code_rate_limit.sql for why: a plain SQL
+// function has no way to see the caller's IP, so it couldn't rate-limit
+// repeated guesses. This can, and locks out an IP after too many failures.
 export async function redeemClientCode(code) {
   const client = requireSupabase();
   const { error: authError } = await client.auth.signInAnonymously();
   if (authError) throw authError;
-  const { data, error } = await client.rpc("redeem_client_code", { p_code: code.trim().toUpperCase() });
-  if (error) throw error;
-  return data; // the event_id this code unlocked
+  const { data, error } = await client.functions.invoke("redeem-code", { body: { code } });
+  if (error) throw new Error(await functionErrorMessage(error));
+  return data.eventId;
 }
 
 export async function invitePlanner(email, role) {

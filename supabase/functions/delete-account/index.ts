@@ -32,10 +32,20 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+// Locked to the app's own origin rather than "*" — this function is only
+// ever meant to be called from the deployed app itself, not from any
+// arbitrary webpage that happens to have gotten hold of someone's token.
+// Reuses the same APP_URL secret already set for invite-email redirects
+// (see invite-planner/invite-client) rather than introducing a new one.
+// Falls back to "*" only if APP_URL somehow isn't set, so a missing
+// secret degrades to the old (less safe) behavior instead of breaking
+// the function outright.
+const allowedOrigin = Deno.env.get("APP_URL") || "*";
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": allowedOrigin,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Vary": "Origin",
 };
 
 function jsonResponse(body: unknown, status: number) {
