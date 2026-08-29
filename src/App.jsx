@@ -4542,7 +4542,7 @@ function TopNav({ role, inEvent, onBackToDashboard, onSignOut, isAdmin, isPrevie
     >
       <div
         style={{
-          maxWidth: 920, margin: "0 auto", padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
+          maxWidth: 920, margin: "0 auto", padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", rowGap: 10,
           // env(safe-area-inset-top) is the Dynamic Island/notch's height —
           // 0 in a normal browser tab, but real on an installed iOS PWA
           // (standalone display mode), where there's no browser chrome
@@ -4561,7 +4561,7 @@ function TopNav({ role, inEvent, onBackToDashboard, onSignOut, isAdmin, isPrevie
             Bi<span style={{ fontWeight: 400 }}>T</span> Affairs
           </span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end", rowGap: 8, minWidth: 0 }}>
         {role === "client" && (
           <span style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkFaint, display: "flex", alignItems: "center", gap: 6 }}>
             {isPreview ? <><Eye size={13} /> Previewing as client</> : <><Mail size={13} /> Client view</>}
