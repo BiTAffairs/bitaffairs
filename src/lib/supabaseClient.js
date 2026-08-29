@@ -40,8 +40,8 @@ function requireSupabase() {
 
 /* ---------------- Planner auth ---------------- */
 
-export async function signInPlanner(email, password) {
-  const { data, error } = await requireSupabase().auth.signInWithPassword({ email, password });
+export async function signInPlanner(email, password, captchaToken) {
+  const { data, error } = await requireSupabase().auth.signInWithPassword({ email, password, options: { captchaToken } });
   if (error) throw error;
   return data.session;
 }
@@ -51,9 +51,10 @@ export async function signInPlanner(email, password) {
 // PASSWORD_RECOVERY event on onAuthStateChange (see App.jsx) is what
 // detects that and shows the "set a new password" screen instead of just
 // signing the person into the app as-is.
-export async function requestPlannerPasswordReset(email) {
+export async function requestPlannerPasswordReset(email, captchaToken) {
   const { error } = await requireSupabase().auth.resetPasswordForEmail(email, {
     redirectTo: window.location.origin,
+    captchaToken,
   });
   if (error) throw error;
 }
@@ -101,12 +102,12 @@ export async function getCurrentPlanner() {
 
 /* ---------------- Client auth (magic link, no password) ---------------- */
 
-export async function requestClientMagicLink(email) {
+export async function requestClientMagicLink(email, captchaToken) {
   // Sends a real email via Supabase Auth. redirectTo should be the deployed
   // app URL — Supabase Auth settings must have this URL allow-listed.
   const { error } = await requireSupabase().auth.signInWithOtp({
     email,
-    options: { emailRedirectTo: window.location.origin },
+    options: { emailRedirectTo: window.location.origin, captchaToken },
   });
   if (error) throw error;
 }
@@ -440,9 +441,9 @@ export async function generateClientCode(eventId) {
 // direct RPC call — see 0028_code_rate_limit.sql for why: a plain SQL
 // function has no way to see the caller's IP, so it couldn't rate-limit
 // repeated guesses. This can, and locks out an IP after too many failures.
-export async function redeemClientCode(code) {
+export async function redeemClientCode(code, captchaToken) {
   const client = requireSupabase();
-  const { error: authError } = await client.auth.signInAnonymously();
+  const { error: authError } = await client.auth.signInAnonymously({ options: { captchaToken } });
   if (authError) throw authError;
   const { data, error } = await client.functions.invoke("redeem-code", { body: { code } });
   if (error) throw new Error(await functionErrorMessage(error));

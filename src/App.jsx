@@ -3904,6 +3904,73 @@ function ConfigurationRequired() {
   );
 }
 
+// hCaptcha widget — Supabase's Attack Protection (dashboard → Authentication
+// → Attack Protection) requires a valid token on every sign-in, sign-up,
+// and password-reset call once enabled, so every auth entry point in this
+// app (planner sign-in, forgot-password, client magic link, access code
+// redemption) needs one of these. No @hcaptcha/react-hcaptcha package —
+// this loads hCaptcha's own script tag directly and renders into a plain
+// div, which avoids adding a dependency for what's a few lines of glue.
+//
+// onToken fires with the token once solved, and with "" if it expires or
+// errors — callers should treat a non-empty token as "ready to submit"
+// and disable their submit button otherwise. resetKey lets a parent force
+// a fresh widget (change the value you pass) after a failed submission,
+// since a token is single-use and Supabase will reject a reused one.
+const HCAPTCHA_SITE_KEY = "1e4c22e8-47d0-4ad6-abb2-b2c6969494e2";
+
+function HCaptchaWidget({ onToken, resetKey }) {
+  const containerRef = useRef(null);
+  const widgetIdRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    function renderWidget() {
+      if (cancelled || !containerRef.current || !window.hcaptcha || widgetIdRef.current !== null) return;
+      widgetIdRef.current = window.hcaptcha.render(containerRef.current, {
+        sitekey: HCAPTCHA_SITE_KEY,
+        callback: (token) => onToken(token),
+        "expired-callback": () => onToken(""),
+        "error-callback": () => onToken(""),
+      });
+    }
+
+    if (window.hcaptcha) {
+      renderWidget();
+    } else {
+      if (!document.getElementById("hcaptcha-script")) {
+        const script = document.createElement("script");
+        script.id = "hcaptcha-script";
+        script.src = "https://js.hcaptcha.com/1/api.js";
+        script.async = true;
+        script.defer = true;
+        document.head.appendChild(script);
+      }
+      const interval = setInterval(() => {
+        if (window.hcaptcha) {
+          clearInterval(interval);
+          renderWidget();
+        }
+      }, 200);
+      return () => { cancelled = true; clearInterval(interval); };
+    }
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (widgetIdRef.current !== null && window.hcaptcha) {
+      window.hcaptcha.reset(widgetIdRef.current);
+      onToken("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey]);
+
+  return <div ref={containerRef} style={{ margin: "4px 0 14px" }} />;
+}
+
 function AuthShell({ children }) {
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -4131,19 +4198,26 @@ function CodeLogin({ onSuccess, onBack }) {
   const [code, setCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
 
   const submit = async () => {
     if (!code.trim()) {
       setError("Enter the code your planner gave you.");
       return;
     }
+    if (!captchaToken) {
+      setError("Complete the verification below to continue.");
+      return;
+    }
     setError("");
     setSubmitting(true);
     try {
-      const eventId = await redeemClientCode(code);
+      const eventId = await redeemClientCode(code, captchaToken);
       onSuccess(eventId);
     } catch (err) {
       setError(err?.message?.includes("Invalid or expired") ? "That code isn't valid or has expired — check with your planner." : (err?.message || "Something went wrong — try again."));
+      setCaptchaResetKey((k) => k + 1);
     } finally {
       setSubmitting(false);
     }
@@ -4176,6 +4250,7 @@ function CodeLogin({ onSuccess, onBack }) {
           />
         </div>
         {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.clayDeep, marginBottom: 14 }}>{error}</div>}
+        <HCaptchaWidget onToken={setCaptchaToken} resetKey={captchaResetKey} />
         <button
           onClick={submit}
           disabled={submitting}
@@ -4202,6 +4277,10 @@ function PlannerLoginForm({ onSubmit, onBack }) {
   const [resetEmail, setResetEmail] = useState("");
   const [resetSending, setResetSending] = useState(false);
   const [resetError, setResetError] = useState("");
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
+  const [resetCaptchaToken, setResetCaptchaToken] = useState("");
+  const [resetCaptchaResetKey, setResetCaptchaResetKey] = useState(0);
 
   const inputStyle = {
     width: "100%", fontFamily: FONT_BODY, fontSize: 14, padding: "11px 14px",
@@ -4214,12 +4293,17 @@ function PlannerLoginForm({ onSubmit, onBack }) {
       setError("Enter your email and password to continue.");
       return;
     }
+    if (!captchaToken) {
+      setError("Complete the verification below to continue.");
+      return;
+    }
     setError("");
     setLoading(true);
     try {
-      await onSubmit(email.trim(), password);
+      await onSubmit(email.trim(), password, captchaToken);
     } catch (err) {
       setError(err?.message || "Couldn't sign in — check your details and try again.");
+      setCaptchaResetKey((k) => k + 1); // token is single-use — get a fresh one for the retry
     } finally {
       setLoading(false);
     }
@@ -4230,13 +4314,18 @@ function PlannerLoginForm({ onSubmit, onBack }) {
       setResetError("Enter a valid email address.");
       return;
     }
+    if (!resetCaptchaToken) {
+      setResetError("Complete the verification below to continue.");
+      return;
+    }
     setResetError("");
     setResetSending(true);
     try {
-      await requestPlannerPasswordReset(resetEmail.trim());
+      await requestPlannerPasswordReset(resetEmail.trim(), resetCaptchaToken);
       setMode("forgot-sent");
     } catch (err) {
       setResetError(err?.message || "Couldn't send that link — try again.");
+      setResetCaptchaResetKey((k) => k + 1);
     } finally {
       setResetSending(false);
     }
@@ -4273,6 +4362,7 @@ function PlannerLoginForm({ onSubmit, onBack }) {
                 />
               </div>
               {resetError && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.clayDeep, marginBottom: 14 }}>{resetError}</div>}
+              <HCaptchaWidget onToken={setResetCaptchaToken} resetKey={resetCaptchaResetKey} />
               <button
                 onClick={sendResetLink}
                 disabled={resetSending}
@@ -4336,6 +4426,7 @@ function PlannerLoginForm({ onSubmit, onBack }) {
           </button>
         </div>
         {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.clayDeep, marginBottom: 14 }}>{error}</div>}
+        <HCaptchaWidget onToken={setCaptchaToken} resetKey={captchaResetKey} />
         <button
           onClick={submit}
           disabled={loading}
@@ -4360,6 +4451,8 @@ function ClientInviteLanding({ onBack }) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
 
   const fieldStyle = {
     width: "100%", fontFamily: FONT_BODY, fontSize: 14, padding: "11px 14px",
@@ -4371,13 +4464,18 @@ function ClientInviteLanding({ onBack }) {
       setError("Enter the email address your planner invited you with.");
       return;
     }
+    if (!captchaToken) {
+      setError("Complete the verification below to continue.");
+      return;
+    }
     setError("");
     setSending(true);
     try {
-      await requestClientMagicLink(clampText(email, LIMITS.shortText));
+      await requestClientMagicLink(clampText(email, LIMITS.shortText), captchaToken);
       setSent(true);
     } catch (err) {
       setError(err?.message || "Couldn't send that link — try again in a moment.");
+      setCaptchaResetKey((k) => k + 1);
     } finally {
       setSending(false);
     }
@@ -4412,6 +4510,7 @@ function ClientInviteLanding({ onBack }) {
               />
             </div>
             {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.clayDeep, marginBottom: 14 }}>{error}</div>}
+            <HCaptchaWidget onToken={setCaptchaToken} resetKey={captchaResetKey} />
             <button
               onClick={sendLink}
               disabled={sending}
@@ -5381,8 +5480,8 @@ export default function BitAffairs() {
           {gateStep === "planner" && (
             <PlannerLoginForm
               onBack={() => setGateStep("welcome")}
-              onSubmit={async (email, password) => {
-                await signInPlanner(email, password);
+              onSubmit={async (email, password, captchaToken) => {
+                await signInPlanner(email, password, captchaToken);
                 const profile = await getCurrentPlanner();
                 if (!profile) {
                   throw new Error("Signed in, but this account doesn't have Studio access — it may not have been added yet, or was removed.");
