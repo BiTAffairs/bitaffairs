@@ -160,7 +160,7 @@ export async function fetchEvents() {
 }
 
 export async function fetchEventDetail(eventId) {
-  const [phases, tasks, proposal, proposalItems, approvals, vendors, budgetItems, clientPayments, messages, members, taskRequests] = await Promise.all([
+  const [phases, tasks, proposal, proposalItems, approvals, vendors, budgetItems, clientPayments, runSheetItems, messages, members, taskRequests] = await Promise.all([
     requireSupabase().from("phases").select("*").eq("event_id", eventId).order("position"),
     requireSupabase().from("tasks").select("*").in(
       "phase_id",
@@ -172,6 +172,7 @@ export async function fetchEventDetail(eventId) {
     requireSupabase().from("vendors").select("*").eq("event_id", eventId), // clients can read these too — see 0009_client_vendors_budget.sql
     requireSupabase().from("budget_items").select("*").eq("event_id", eventId), // clients can read these too — see 0009_client_vendors_budget.sql
     requireSupabase().from("client_payments").select("*").eq("event_id", eventId).order("date_sent", { ascending: false }), // clients can read these too — see 0025_client_payments.sql
+    requireSupabase().from("run_sheet_items").select("*").eq("event_id", eventId).order("position"), // planner-only, no client read policy — see 0027_run_sheet.sql
     requireSupabase().from("messages").select("*").eq("event_id", eventId).order("created_at"),
     // planner_id is required here (not just email/display_name) so the UI
     // can appoint specific people to a restricted task — see task_assignees.
@@ -198,6 +199,7 @@ export async function fetchEventDetail(eventId) {
     vendors: vendors.data ?? [],
     budgetItems: budgetItems.data ?? [],
     clientPayments: clientPayments.data ?? [],
+    runSheetItems: runSheetItems.data ?? [],
     messages: messages.data ?? [],
     members: members.data ?? [],
     taskRequests: taskRequests.data ?? [],
@@ -520,6 +522,48 @@ export async function updateVendorDetails(vendorId, { name, category, contact })
 // delete — nothing else to cascade or clean up.
 export async function deleteVendor(vendorId) {
   const { error } = await requireSupabase().from("vendors").delete().eq("id", vendorId);
+  if (error) throw error;
+}
+
+// Due dates (0026_due_dates.sql) — one per vendor (when the agency owes
+// them the rest of their price) and one per event (when the client owes
+// the rest of the budget). Null clears the date.
+export async function updateVendorBalanceDueDate(vendorId, dueDate) {
+  const { error } = await requireSupabase().from("vendors").update({ balance_due_date: dueDate }).eq("id", vendorId);
+  if (error) throw error;
+}
+
+export async function updateEventBalanceDueDate(eventId, dueDate) {
+  const { error } = await requireSupabase().from("events").update({ client_balance_due_date: dueDate }).eq("id", eventId);
+  if (error) throw error;
+}
+
+// Day-of run sheet (0027_run_sheet.sql) — planner-only, never exposed to
+// clients. position controls display order; new items append to the end
+// (caller passes items.length as position), and moveRunSheetItem swaps
+// two neighboring positions to reorder.
+export async function addRunSheetItem(eventId, { timeLabel, title, notes, position }) {
+  const { error } = await requireSupabase()
+    .from("run_sheet_items")
+    .insert({ event_id: eventId, time_label: timeLabel || null, title, notes: notes || null, position });
+  if (error) throw error;
+}
+
+export async function updateRunSheetItem(itemId, { timeLabel, title, notes }) {
+  const { error } = await requireSupabase()
+    .from("run_sheet_items")
+    .update({ time_label: timeLabel || null, title, notes: notes || null })
+    .eq("id", itemId);
+  if (error) throw error;
+}
+
+export async function deleteRunSheetItem(itemId) {
+  const { error } = await requireSupabase().from("run_sheet_items").delete().eq("id", itemId);
+  if (error) throw error;
+}
+
+export async function setRunSheetItemPosition(itemId, position) {
+  const { error } = await requireSupabase().from("run_sheet_items").update({ position }).eq("id", itemId);
   if (error) throw error;
 }
 

@@ -76,12 +76,21 @@ export function assembleEventFromSupabase(eventRow, detail) {
       status: a.status, requestedAt: a.requested_at, approvedAt: a.approved_at, disapprovedAt: a.disapproved_at,
     })),
     vendors: detail.vendors.map((v) => ({
-      id: v.id, name: v.name, category: v.category, contact: v.contact, phone: v.phone, cost: v.cost, deposit: v.deposit || 0, status: v.status,
+      id: v.id, name: v.name, category: v.category, contact: v.contact, phone: v.phone, cost: v.cost, deposit: v.deposit || 0,
+      balanceDueDate: v.balance_due_date || null, status: v.status,
     })),
     // 0025_client_payments.sql — money the client has sent the agency,
     // newest first (already ordered that way by the fetch).
     clientPayments: (detail.clientPayments || []).map((p) => ({
       id: p.id, amount: p.amount, dateSent: p.date_sent,
+    })),
+    // 0026_due_dates.sql — one overall date for when the client's
+    // remaining balance is due, not a full payment schedule.
+    clientBalanceDueDate: eventRow.client_balance_due_date || null,
+    // 0027_run_sheet.sql — planner-only day-of timeline, already ordered
+    // by position from the fetch.
+    runSheet: (detail.runSheetItems || []).map((r) => ({
+      id: r.id, timeLabel: r.time_label || "", title: r.title, notes: r.notes || "", position: r.position,
     })),
     messages: detail.messages.map((m) => ({
       id: m.id, authorType: m.author_type, authorName: m.author_name,

@@ -3,7 +3,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Users, Calendar, MapPin,
   Circle, CheckCircle2, Send, Stamp, FileText, Lock,
   Wallet, ListChecks, Eye, EyeOff, Building2, Truck, Printer, Mail, Phone, Bell, BellOff, Pencil,
-  MessageCircle, ImagePlus, Banknote
+  MessageCircle, ImagePlus, Banknote, Clock, ChevronUp, ChevronDown
 } from "lucide-react";
 import {
   supabase, supabaseConfigured,
@@ -25,6 +25,9 @@ import {
   addVendor as sbAddVendor, cycleVendorStatus as sbCycleVendorStatus, updateVendorPhone as sbUpdateVendorPhone,
   updateVendorCost as sbUpdateVendorCost, updateVendorDeposit as sbUpdateVendorDeposit,
   updateVendorDetails as sbUpdateVendorDetails, deleteVendor as sbDeleteVendor,
+  updateVendorBalanceDueDate as sbUpdateVendorBalanceDueDate, updateEventBalanceDueDate as sbUpdateEventBalanceDueDate,
+  addRunSheetItem as sbAddRunSheetItem, updateRunSheetItem as sbUpdateRunSheetItem,
+  deleteRunSheetItem as sbDeleteRunSheetItem, setRunSheetItemPosition as sbSetRunSheetItemPosition,
   addClientPayment as sbAddClientPayment, deleteClientPayment as sbDeleteClientPayment,
   createEvent as sbCreateEvent, inviteClient as sbInviteClient,
   invitePlanner, fetchTeamMembers, updatePlannerRole, removePlanner, deleteAccount,
@@ -67,6 +70,13 @@ const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Newsr
 
 function currency(n) {
   return "₦" + n.toLocaleString("en-NG");
+}
+
+// YYYY-MM-DD for "today", matching the format <input type="date"> and
+// Postgres date columns both use — lets us compare a due date string
+// directly without parsing, e.g. `dueDate < todayISO()`.
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function progressOf(event) {
@@ -1337,7 +1347,7 @@ function TaskRequestRow({ request, phases, isAdmin, onApprove, onDismiss }) {
 
 /* ---------------- Budget ---------------- */
 
-function BudgetView({ budget, vendors, clientPayments }) {
+function BudgetView({ budget, vendors, clientPayments, clientBalanceDueDate, onUpdateBalanceDueDate, readOnly = false }) {
   // "Paid to confirmed vendors" reflects actual money out the door — the
   // deposit, not the full contract price (0024_vendor_deposit.sql). A
   // vendor confirmed at ₦500,000 with a ₦100,000 deposit only counts as
@@ -1354,6 +1364,8 @@ function BudgetView({ budget, vendors, clientPayments }) {
   // concern. Conflating the two would make "Remaining" mean two different
   // things depending on whether a client had paid recently.
   const totalReceived = (clientPayments || []).reduce((s, p) => s + p.amount, 0);
+  const clientOutstanding = Math.max(0, budget.total - totalReceived);
+  const isOverdue = clientOutstanding > 0 && clientBalanceDueDate && clientBalanceDueDate < todayISO();
 
   return (
     <SectionCard>
@@ -1394,6 +1406,37 @@ function BudgetView({ budget, vendors, clientPayments }) {
         </span>
         <span style={{ fontFamily: FONT_MONO, color: COLORS.ink }}>{currency(totalReceived)}</span>
       </div>
+      {clientOutstanding > 0 && (
+        <div
+          style={{
+            display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", borderRadius: 4,
+            background: isOverdue ? COLORS.clayPale : COLORS.paper, marginBottom: 20,
+            fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700,
+          }}
+        >
+          <span style={{ color: isOverdue ? COLORS.clayDeep : COLORS.ink }}>
+            {isOverdue ? "Client balance overdue" : "Client balance due by"}
+          </span>
+          {readOnly ? (
+            <span style={{ fontFamily: FONT_MONO, color: isOverdue ? COLORS.clayDeep : COLORS.ink }}>
+              {clientBalanceDueDate || "Not set"}
+            </span>
+          ) : (
+            <input
+              type="date"
+              defaultValue={clientBalanceDueDate || ""}
+              onBlur={(e) => {
+                const next = e.target.value || null;
+                if (next !== clientBalanceDueDate) onUpdateBalanceDueDate(next);
+              }}
+              style={{
+                fontFamily: FONT_MONO, fontSize: 13, color: isOverdue ? COLORS.clayDeep : COLORS.ink,
+                background: "none", border: "none", outline: "none", padding: 0,
+              }}
+            />
+          )}
+        </div>
+      )}
       {budget.items.length > 0 && (
         <>
           <div style={{ fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: COLORS.inkFaint, marginBottom: 8 }}>
@@ -1606,12 +1649,174 @@ function VendorMoneyField({ value, onSave }) {
   );
 }
 
+/* ---------------- Run sheet ---------------- */
+
+// Day-of timeline — a different concept from phases/tasks (planning-stage
+// to-dos checked off over weeks) and from client payments (money). This
+// is the minute-by-minute event-day schedule, planner-only, never shown
+// to the client (0027_run_sheet.sql has no client read policy at all).
+function RunSheetView({ items, onAdd, onUpdate, onDelete, onMove }) {
+  const [timeLabel, setTimeLabel] = useState("");
+  const [title, setTitle] = useState("");
+  const [notes, setNotes] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editTime, setEditTime] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+
+  const sorted = [...(items || [])].sort((a, b) => a.position - b.position);
+
+  const submit = async () => {
+    if (!title.trim()) {
+      setError("Enter what happens at this point in the day.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onAdd({ timeLabel: clampText(timeLabel, LIMITS.shortText), title: clampText(title, LIMITS.shortText), notes: clampText(notes, LIMITS.longText || LIMITS.shortText), position: sorted.length });
+      setTimeLabel("");
+      setTitle("");
+      setNotes("");
+    } catch (err) {
+      setError(err?.message || "Couldn't save that.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startEdit = (item) => {
+    setEditingId(item.id);
+    setEditTime(item.timeLabel || "");
+    setEditTitle(item.title);
+    setEditNotes(item.notes || "");
+  };
+
+  const saveEdit = async (id) => {
+    if (!editTitle.trim()) return;
+    await onUpdate(id, { timeLabel: clampText(editTime, LIMITS.shortText), title: clampText(editTitle, LIMITS.shortText), notes: clampText(editNotes, LIMITS.longText || LIMITS.shortText) });
+    setEditingId(null);
+  };
+
+  const inputStyle = {
+    fontFamily: FONT_BODY, fontSize: 13, padding: "9px 12px", border: `1px solid ${COLORS.line}`,
+    borderRadius: 4, background: COLORS.paper, color: COLORS.ink, outline: "none",
+  };
+
+  return (
+    <SectionCard>
+      <SectionTitle>Run sheet</SectionTitle>
+      {sorted.length === 0 && (
+        <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkFaint, marginBottom: 16 }}>
+          No run sheet items yet — this is the day-of timeline, not the planning task list.
+        </div>
+      )}
+      {sorted.map((item, i) => (
+        <div key={item.id} style={{ padding: "12px 0", borderBottom: `1px solid ${COLORS.line}` }}>
+          {editingId === item.id ? (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 8 }}>
+                <input style={inputStyle} value={editTime} onChange={(e) => setEditTime(e.target.value)} placeholder="Time" />
+                <input style={inputStyle} value={editTitle} onChange={(e) => setEditTitle(e.target.value)} placeholder="What happens" />
+              </div>
+              <textarea
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
+                placeholder="Notes (optional)"
+                rows={2}
+                style={{ ...inputStyle, width: "100%", marginTop: 8, resize: "vertical", fontFamily: FONT_BODY }}
+              />
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button
+                  onClick={() => saveEdit(item.id)}
+                  style={{ padding: "6px 12px", borderRadius: 4, border: "none", background: COLORS.ink, color: COLORS.card, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => setEditingId(null)}
+                  style={{ padding: "6px 12px", borderRadius: 4, border: `1px solid ${COLORS.line}`, background: "transparent", color: COLORS.inkSoft, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12, cursor: "pointer" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <button
+                  onClick={() => onMove(item.id, "up")}
+                  disabled={i === 0}
+                  style={{ background: "none", border: "none", color: i === 0 ? COLORS.line : COLORS.inkFaint, cursor: i === 0 ? "default" : "pointer", padding: 0 }}
+                >
+                  <ChevronUp size={14} />
+                </button>
+                <button
+                  onClick={() => onMove(item.id, "down")}
+                  disabled={i === sorted.length - 1}
+                  style={{ background: "none", border: "none", color: i === sorted.length - 1 ? COLORS.line : COLORS.inkFaint, cursor: i === sorted.length - 1 ? "default" : "pointer", padding: 0 }}
+                >
+                  <ChevronDown size={14} />
+                </button>
+              </div>
+              {item.timeLabel && (
+                <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: COLORS.inkSoft, minWidth: 70, paddingTop: 2 }}>{item.timeLabel}</div>
+              )}
+              <div style={{ flex: 1 }}>
+                <div style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 600, color: COLORS.ink }}>{item.title}</div>
+                {item.notes && <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>{item.notes}</div>}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <button onClick={() => startEdit(item)} title="Edit" style={{ display: "flex", background: "none", border: "none", color: COLORS.inkFaint, cursor: "pointer", padding: 4 }}>
+                  <Pencil size={13} />
+                </button>
+                <button onClick={() => onDelete(item.id)} title="Delete" style={{ display: "flex", background: "none", border: "none", color: COLORS.inkFaint, cursor: "pointer", padding: 4 }}>
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+
+      <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px dashed ${COLORS.line}` }}>
+        <Eyebrow>Add to the run sheet</Eyebrow>
+        <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 8, marginTop: 10 }}>
+          <input style={inputStyle} value={timeLabel} onChange={(e) => setTimeLabel(e.target.value)} placeholder="Time (e.g. 9:00 AM)" />
+          <input style={inputStyle} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What happens" />
+        </div>
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Notes (optional)"
+          rows={2}
+          style={{ ...inputStyle, width: "100%", marginTop: 8, resize: "vertical", fontFamily: FONT_BODY }}
+        />
+        {error && <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.clayDeep, marginTop: 8 }}>{error}</div>}
+        <button
+          onClick={submit}
+          disabled={saving}
+          style={{
+            marginTop: 10, display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 4, border: "none",
+            background: COLORS.brass, color: COLORS.card, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
+            cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1,
+          }}
+        >
+          <Plus size={14} /> {saving ? "Adding…" : "Add item"}
+        </button>
+      </div>
+    </SectionCard>
+  );
+}
+
 // A single vendor row — display mode, edit mode (name/category/contact),
 // and a delete-with-confirm action. Phone/cost/deposit keep their own
 // existing inline-edit behavior (VendorMoneyField, the phone input)
 // unchanged; edit mode here only covers the three fields that previously
 // had no way to be corrected after a vendor was created.
-function VendorRow({ vendor: v, readOnly, onCycleStatus, onUpdatePhone, onUpdateCost, onUpdateDeposit, onUpdateDetails, onDelete }) {
+function VendorRow({ vendor: v, readOnly, onCycleStatus, onUpdatePhone, onUpdateCost, onUpdateDeposit, onUpdateDetails, onUpdateBalanceDueDate, onDelete }) {
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [name, setName] = useState(v.name);
@@ -1621,6 +1826,8 @@ function VendorRow({ vendor: v, readOnly, onCycleStatus, onUpdatePhone, onUpdate
   const [saving, setSaving] = useState(false);
 
   const tag = vendorStatusTag(v.status);
+  const balance = Math.max(0, v.cost - (v.deposit || 0));
+  const isOverdue = balance > 0 && v.balanceDueDate && v.balanceDueDate < todayISO();
 
   const saveEdit = async () => {
     if (!name.trim() || !category.trim()) {
@@ -1755,9 +1962,28 @@ function VendorRow({ vendor: v, readOnly, onCycleStatus, onUpdatePhone, onUpdate
             <VendorMoneyField value={v.deposit || 0} onSave={onUpdateDeposit} />
           )}
         </div>
-        <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: COLORS.inkFaint }}>
-          Balance {currency(Math.max(0, v.cost - (v.deposit || 0)))}
+        <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: isOverdue ? COLORS.clayDeep : COLORS.inkFaint }}>
+          Balance {currency(balance)}
         </div>
+        {!readOnly && balance > 0 && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
+            <span style={{ fontFamily: FONT_BODY, fontSize: 10, color: isOverdue ? COLORS.clayDeep : COLORS.inkFaint }}>
+              {isOverdue ? "Overdue —" : "Due"}
+            </span>
+            <input
+              type="date"
+              defaultValue={v.balanceDueDate || ""}
+              onBlur={(e) => {
+                const next = e.target.value || null;
+                if (next !== v.balanceDueDate) onUpdateBalanceDueDate(next);
+              }}
+              style={{
+                fontFamily: FONT_MONO, fontSize: 11, color: isOverdue ? COLORS.clayDeep : COLORS.inkFaint,
+                background: "none", border: "none", outline: "none", padding: 0,
+              }}
+            />
+          </div>
+        )}
       </div>
       {readOnly ? (
         <span
@@ -1816,7 +2042,7 @@ function VendorRow({ vendor: v, readOnly, onCycleStatus, onUpdatePhone, onUpdate
   );
 }
 
-function VendorsView({ vendors, onAddVendor, onCycleStatus, onUpdatePhone, onUpdateCost, onUpdateDeposit, onUpdateDetails, onDeleteVendor, readOnly = false }) {
+function VendorsView({ vendors, onAddVendor, onCycleStatus, onUpdatePhone, onUpdateCost, onUpdateDeposit, onUpdateDetails, onUpdateBalanceDueDate, onDeleteVendor, readOnly = false }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [contact, setContact] = useState("");
@@ -1877,6 +2103,7 @@ function VendorsView({ vendors, onAddVendor, onCycleStatus, onUpdatePhone, onUpd
           onUpdateCost={(next) => onUpdateCost(v.id, next)}
           onUpdateDeposit={(next) => onUpdateDeposit(v.id, next)}
           onUpdateDetails={(details) => onUpdateDetails(v.id, details)}
+          onUpdateBalanceDueDate={(date) => onUpdateBalanceDueDate(v.id, date)}
           onDelete={() => onDeleteVendor(v.id)}
         />
       ))}
@@ -2501,6 +2728,116 @@ function NewProjectForm({ onCreate, onBack }) {
 
 /* ---------------- Admin approval queue ---------------- */
 
+// Agency-wide money view, admin-only — aggregates across every event in
+// the org from data the app already has loaded (each event's vendors and
+// clientPayments are fetched as part of the normal event list load), so
+// this needs no new query, just arithmetic over what's already in state.
+// Budget page's per-event numbers (vendor deposit-based spend, client
+// balance) are the same figures rolled up here — nothing new is computed,
+// just summed across events and flagged where a due date has passed.
+function AgencyFinancials({ events, onBack }) {
+  const rows = (events || []).map((e) => {
+    const vendors = e.vendors || [];
+    const confirmedVendors = vendors.filter((v) => v.status === "confirmed");
+    const vendorCost = confirmedVendors.reduce((s, v) => s + v.cost, 0);
+    const vendorPaid = confirmedVendors.reduce((s, v) => s + (v.deposit || 0), 0);
+    const vendorBalance = Math.max(0, vendorCost - vendorPaid);
+    const vendorOverdue = confirmedVendors.some(
+      (v) => Math.max(0, v.cost - (v.deposit || 0)) > 0 && v.balanceDueDate && v.balanceDueDate < todayISO()
+    );
+    const received = (e.clientPayments || []).reduce((s, p) => s + p.amount, 0);
+    const clientOutstanding = Math.max(0, (e.budget?.total || 0) - received);
+    const clientOverdue = clientOutstanding > 0 && e.clientBalanceDueDate && e.clientBalanceDueDate < todayISO();
+    return {
+      id: e.id, name: e.name, date: e.date, budgetTotal: e.budget?.total || 0,
+      received, clientOutstanding, clientOverdue, clientBalanceDueDate: e.clientBalanceDueDate,
+      vendorBalance, vendorOverdue,
+    };
+  });
+
+  const totals = rows.reduce(
+    (acc, r) => ({
+      budget: acc.budget + r.budgetTotal,
+      received: acc.received + r.received,
+      clientOutstanding: acc.clientOutstanding + r.clientOutstanding,
+      vendorBalance: acc.vendorBalance + r.vendorBalance,
+    }),
+    { budget: 0, received: 0, clientOutstanding: 0, vendorBalance: 0 }
+  );
+  const overdueClientCount = rows.filter((r) => r.clientOverdue).length;
+  const overdueVendorCount = rows.filter((r) => r.vendorOverdue).length;
+
+  const statBox = (label, value, warn) => (
+    <div style={{ padding: "14px 16px", borderRadius: 4, background: warn ? COLORS.clayPale : COLORS.paper }}>
+      <div style={{ fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: warn ? COLORS.clayDeep : COLORS.inkFaint, marginBottom: 6 }}>
+        {label}
+      </div>
+      <div style={{ fontFamily: FONT_MONO, fontSize: 20, fontWeight: 700, color: warn ? COLORS.clayDeep : COLORS.ink }}>{value}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ maxWidth: 920, margin: "0 auto", padding: "24px 20px" }}>
+      <button
+        onClick={onBack}
+        style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: COLORS.inkSoft, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13, cursor: "pointer", marginBottom: 16 }}
+      >
+        <ChevronLeft size={16} /> Back
+      </button>
+      <SectionCard>
+        <SectionTitle>Agency finances</SectionTitle>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
+          {statBox("Total budget, all events", currency(totals.budget))}
+          {statBox("Received from clients", currency(totals.received))}
+          {statBox(`Outstanding from clients${overdueClientCount ? ` (${overdueClientCount} overdue)` : ""}`, currency(totals.clientOutstanding), overdueClientCount > 0)}
+          {statBox(`Owed to vendors${overdueVendorCount ? ` (${overdueVendorCount} overdue)` : ""}`, currency(totals.vendorBalance), overdueVendorCount > 0)}
+        </div>
+
+        <div style={{ fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: COLORS.inkFaint, marginBottom: 8 }}>
+          By event
+        </div>
+        {rows.length === 0 && (
+          <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkFaint }}>No events yet.</div>
+        )}
+        {rows.map((r, i) => (
+          <div
+            key={r.id}
+            style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "12px 0",
+              borderBottom: i < rows.length - 1 ? `1px solid ${COLORS.line}` : "none", flexWrap: "wrap",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <div style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 600, color: COLORS.ink }}>{r.name}</div>
+              <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkFaint, marginTop: 2 }}>{r.date}</div>
+            </div>
+            <div style={{ textAlign: "right", minWidth: 130 }}>
+              <div style={{ fontFamily: FONT_BODY, fontSize: 10, color: COLORS.inkFaint }}>Client outstanding</div>
+              <div style={{ fontFamily: FONT_MONO, fontSize: 13, fontWeight: 700, color: r.clientOverdue ? COLORS.clayDeep : COLORS.ink }}>
+                {currency(r.clientOutstanding)}
+              </div>
+              {r.clientBalanceDueDate && (
+                <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: r.clientOverdue ? COLORS.clayDeep : COLORS.inkFaint }}>
+                  {r.clientOverdue ? "Overdue — " : "Due "}{r.clientBalanceDueDate}
+                </div>
+              )}
+            </div>
+            <div style={{ textAlign: "right", minWidth: 130 }}>
+              <div style={{ fontFamily: FONT_BODY, fontSize: 10, color: COLORS.inkFaint }}>Owed to vendors</div>
+              <div style={{ fontFamily: FONT_MONO, fontSize: 13, fontWeight: 700, color: r.vendorOverdue ? COLORS.clayDeep : COLORS.ink }}>
+                {currency(r.vendorBalance)}
+              </div>
+              {r.vendorOverdue && (
+                <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.clayDeep }}>Overdue</div>
+              )}
+            </div>
+          </div>
+        ))}
+      </SectionCard>
+    </div>
+  );
+}
+
 function TeamManagement({ onBack, currentPlannerId, onSelfDeleted }) {
   const [members, setMembers] = useState(null);
   const [error, setError] = useState("");
@@ -3058,7 +3395,7 @@ function DeleteAccountControl({ isSelf, onDelete }) {
   );
 }
 
-function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask, onAddTask, onDeleteTask, onSubmitProposalReview, onSendProposal, onRejectProposal, onResetProposal, onOpenDocument, onAddProposalItem, onUpdateProposalItem, onDeleteProposalItem, onRequestApproval, onReleaseApproval, onEditApproval, onDeleteApproval, onAddVendor, onCycleVendorStatus, onUpdateVendorPhone, onUpdateVendorCost, onUpdateVendorDeposit, onUpdateVendorDetails, onDeleteVendor, onAddClientPayment, onDeleteClientPayment, onSendMessage, onDeleteMessage, onPreviewClient, onDeleteProject, onApproveTaskRequest, onDismissTaskRequest }) {
+function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask, onAddTask, onDeleteTask, onSubmitProposalReview, onSendProposal, onRejectProposal, onResetProposal, onOpenDocument, onAddProposalItem, onUpdateProposalItem, onDeleteProposalItem, onRequestApproval, onReleaseApproval, onEditApproval, onDeleteApproval, onAddVendor, onCycleVendorStatus, onUpdateVendorPhone, onUpdateVendorCost, onUpdateVendorDeposit, onUpdateVendorDetails, onUpdateVendorBalanceDueDate, onDeleteVendor, onAddClientPayment, onDeleteClientPayment, onUpdateEventBalanceDueDate, onAddRunSheetItem, onUpdateRunSheetItem, onDeleteRunSheetItem, onMoveRunSheetItem, onSendMessage, onDeleteMessage, onPreviewClient, onDeleteProject, onApproveTaskRequest, onDismissTaskRequest }) {
   const [tab, setTab] = useState("overview");
   const pct = progressOf(event);
 
@@ -3116,6 +3453,7 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
           ["messages", "Messages", MessageCircle],
           ["budget", "Budget", Wallet],
           ["payments", "Client payments", Banknote],
+          ["runsheet", "Run sheet", Clock],
         ].map(([key, label, Icon]) => (
           <button
             key={key}
@@ -3182,7 +3520,7 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
         <ApprovalsList approvals={event.approvals} editable isAdmin={isAdmin} onRequest={onRequestApproval} onRelease={onReleaseApproval} onEdit={onEditApproval} onDelete={onDeleteApproval} />
       )}
       {tab === "vendors" && (
-        <VendorsView vendors={event.vendors || []} onAddVendor={onAddVendor} onCycleStatus={onCycleVendorStatus} onUpdatePhone={onUpdateVendorPhone} onUpdateCost={onUpdateVendorCost} onUpdateDeposit={onUpdateVendorDeposit} onUpdateDetails={onUpdateVendorDetails} onDeleteVendor={onDeleteVendor} />
+        <VendorsView vendors={event.vendors || []} onAddVendor={onAddVendor} onCycleStatus={onCycleVendorStatus} onUpdatePhone={onUpdateVendorPhone} onUpdateCost={onUpdateVendorCost} onUpdateDeposit={onUpdateVendorDeposit} onUpdateDetails={onUpdateVendorDetails} onUpdateBalanceDueDate={onUpdateVendorBalanceDueDate} onDeleteVendor={onDeleteVendor} />
       )}
       {tab === "messages" && (
         <MessageThread
@@ -3196,12 +3534,29 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
           ]}
         />
       )}
-      {tab === "budget" && <BudgetView budget={event.budget} vendors={event.vendors} clientPayments={event.clientPayments} />}
+      {tab === "budget" && (
+        <BudgetView
+          budget={event.budget}
+          vendors={event.vendors}
+          clientPayments={event.clientPayments}
+          clientBalanceDueDate={event.clientBalanceDueDate}
+          onUpdateBalanceDueDate={onUpdateEventBalanceDueDate}
+        />
+      )}
       {tab === "payments" && (
         <ClientPaymentsView
           payments={event.clientPayments || []}
           onAdd={(amount, dateSent) => onAddClientPayment(amount, dateSent)}
           onDelete={onDeleteClientPayment}
+        />
+      )}
+      {tab === "runsheet" && (
+        <RunSheetView
+          items={event.runSheet || []}
+          onAdd={(fields) => onAddRunSheetItem(fields)}
+          onUpdate={(itemId, fields) => onUpdateRunSheetItem(itemId, fields)}
+          onDelete={(itemId) => onDeleteRunSheetItem(itemId)}
+          onMove={(itemId, direction) => onMoveRunSheetItem(itemId, direction)}
         />
       )}
     </div>
@@ -3298,7 +3653,7 @@ function ClientPortal({ event, onToggleTask, onApproveProposal, onDisapproveProp
 
         <VendorsView vendors={event.vendors || []} readOnly />
 
-        <BudgetView budget={event.budget} vendors={event.vendors} clientPayments={event.clientPayments} />
+        <BudgetView budget={event.budget} vendors={event.vendors} clientPayments={event.clientPayments} clientBalanceDueDate={event.clientBalanceDueDate} readOnly />
 
         <ClientPaymentsView payments={event.clientPayments || []} readOnly />
 
@@ -3670,47 +4025,104 @@ function SetNewPasswordForm({ onComplete }) {
   );
 }
 
-function WelcomeGate({ onChoosePlanner, onChooseClient, onChooseCode }) {
+// The opening screen — deliberately its own thing, not routed through
+// AuthShell like every other auth step (login form, client invite
+// landing, code entry). Those keep the light/paper treatment; this one
+// is dark to match the wordmark's own near-black background exactly
+// (the transparent PNG has no box around it as a result), with the red
+// accent pulled through the glow, top stripe, and card edges. See the
+// design conversation this came out of — the mismatch was that the bold
+// graphic logo sat inside a soft cream, delicate-serif UI; this resolves
+// that instead of working around it.
+function BoldWelcomeScreen({ onChoosePlanner, onChooseClient, onChooseCode }) {
   const cardStyle = {
     display: "flex", alignItems: "center", gap: 14, width: "100%", textAlign: "left",
-    background: COLORS.card, border: `1px solid ${COLORS.line}`, borderRadius: 4,
-    padding: "18px 20px", cursor: "pointer", marginBottom: 12,
+    background: "linear-gradient(180deg, #1E1E1E, #191216)",
+    border: "1px solid rgba(217,30,75,0.22)", borderLeft: `3px solid rgba(217,30,75,0.5)`, borderRadius: 6,
+    padding: "17px 18px 17px 16px", cursor: "pointer", marginBottom: 10,
   };
+  const badgeStyle = {
+    width: 38, height: 38, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+    flexShrink: 0, background: "rgba(217,30,75,0.18)", color: COLORS.brass,
+  };
+
   return (
-    <div>
-      <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 26, color: COLORS.ink, textAlign: "center", margin: "0 0 6px" }}>
-        Welcome back
-      </h1>
-      <p style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkSoft, textAlign: "center", margin: "0 0 28px" }}>
-        Sign in to continue
-      </p>
-      <button onClick={onChoosePlanner} style={cardStyle}>
-        <div style={{ width: 40, height: 40, borderRadius: "50%", background: COLORS.brassPale, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <Building2 size={18} color={COLORS.brassDeep} />
+    <div style={{ minHeight: "100vh", background: "#141414", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, position: "relative", overflow: "hidden" }}>
+      <style>{`
+        ${FONT_IMPORT}
+        @keyframes bwFadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes bwGlowBreathe { 0%, 100% { opacity: 0.85; transform: scale(1); } 50% { opacity: 1; transform: scale(1.08); } }
+        @keyframes bwStripeSweep { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+        @keyframes bwAccentGrow { from { width: 0; opacity: 0; } to { width: 40px; opacity: 1; } }
+        @keyframes bwLogoGlowPulse { 0%, 100% { filter: drop-shadow(0 0 22px rgba(217,30,75,0.3)); } 50% { filter: drop-shadow(0 0 40px rgba(217,30,75,0.55)); } }
+        .bw-reveal { opacity: 0; animation: bwFadeUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .bw-r1 { animation-delay: 0.05s; } .bw-r2 { animation-delay: 0.22s; } .bw-r3 { animation-delay: 0.34s; }
+        .bw-r4 { animation-delay: 0.44s; } .bw-r5 { animation-delay: 0.56s; } .bw-r6 { animation-delay: 0.66s; } .bw-r7 { animation-delay: 0.76s; }
+        .bw-glow-1 { position: absolute; top: -25%; left: -15%; width: 75%; height: 75%; background: radial-gradient(circle, rgba(217,30,75,0.38) 0%, rgba(217,30,75,0) 70%); pointer-events: none; animation: bwGlowBreathe 7s ease-in-out infinite; }
+        .bw-glow-2 { position: absolute; bottom: -30%; right: -15%; width: 65%; height: 65%; background: radial-gradient(circle, rgba(217,30,75,0.24) 0%, rgba(217,30,75,0) 70%); pointer-events: none; animation: bwGlowBreathe 8s ease-in-out infinite 1.5s; }
+        .bw-stripe { position: absolute; top: 0; left: 0; width: 100%; height: 4px; background: linear-gradient(90deg, ${COLORS.brassDeep}, ${COLORS.brass} 40%, ${COLORS.brass} 60%, ${COLORS.brassDeep}); background-size: 60% 100%; animation: bwStripeSweep 5s linear infinite; }
+        .bw-accent { width: 0; height: 4px; background: ${COLORS.brass}; margin: 0 auto 20px; border-radius: 2px; animation: bwAccentGrow 0.5s ease-out forwards; animation-delay: 0.3s; }
+        .bw-logo img { width: 210px; animation: bwLogoGlowPulse 4.5s ease-in-out infinite; }
+        .bw-card:hover { border-color: ${COLORS.brass} !important; transform: translateY(-1px); box-shadow: 0 8px 20px rgba(217,30,75,0.18); }
+        @media (prefers-reduced-motion: reduce) {
+          .bw-reveal, .bw-glow-1, .bw-glow-2, .bw-stripe, .bw-logo img { animation: none !important; opacity: 1 !important; transform: none !important; }
+          .bw-logo img { filter: drop-shadow(0 0 28px rgba(217,30,75,0.35)) !important; }
+          .bw-accent { animation: none !important; width: 40px !important; opacity: 1 !important; }
+        }
+      `}</style>
+      <div className="bw-glow-1" />
+      <div className="bw-glow-2" />
+      <div className="bw-stripe" />
+      <div style={{ width: "100%", maxWidth: 420, position: "relative", zIndex: 1 }}>
+        <div className="bw-logo bw-reveal bw-r1" style={{ display: "flex", justifyContent: "center", marginBottom: 30 }}>
+          <img src="/brand/bit-wordmark-transparent.png" alt="BiT — Big Things" />
         </div>
-        <div>
-          <div style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 700, color: COLORS.ink }}>I'm on the planning team</div>
-          <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>Sign in with your agency account</div>
+        <div className="bw-accent" />
+        <h1
+          className="bw-reveal bw-r2"
+          style={{
+            fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 25, lineHeight: 1.25,
+            color: "#fff", textAlign: "center", margin: "0 0 10px", maxWidth: 250, marginLeft: "auto", marginRight: "auto",
+          }}
+        >
+          Every big thing starts with a plan.
+        </h1>
+        <p className="bw-reveal bw-r3" style={{ fontFamily: FONT_BODY, fontSize: 13, color: "rgba(255,255,255,0.5)", textAlign: "center", margin: "0 0 32px" }}>
+          Sign in to continue
+        </p>
+
+        <button className="bw-card bw-reveal bw-r4" onClick={onChoosePlanner} style={cardStyle}>
+          <div style={badgeStyle}><Building2 size={16} /></div>
+          <div>
+            <div style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 600, color: "#fff" }}>I'm on the planning team</div>
+            <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>Sign in with your agency account</div>
+          </div>
+        </button>
+        <button className="bw-card bw-reveal bw-r5" onClick={onChooseClient} style={cardStyle}>
+          <div style={badgeStyle}><Mail size={16} /></div>
+          <div>
+            <div style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 600, color: "#fff" }}>I have an invite link</div>
+            <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>View your event as a client</div>
+          </div>
+        </button>
+        <button className="bw-card bw-reveal bw-r6" onClick={onChooseCode} style={cardStyle}>
+          <div style={badgeStyle}><Stamp size={16} /></div>
+          <div>
+            <div style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 600, color: "#fff" }}>I have an access code</div>
+            <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>No email needed</div>
+          </div>
+        </button>
+
+        <div
+          className="bw-reveal bw-r7"
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 24,
+            fontFamily: FONT_MONO, fontSize: 10, letterSpacing: 1, color: "rgba(217,30,75,0.7)", textTransform: "uppercase",
+          }}
+        >
+          BiT — Big Things
         </div>
-      </button>
-      <button onClick={onChooseClient} style={cardStyle}>
-        <div style={{ width: 40, height: 40, borderRadius: "50%", background: COLORS.clayPale, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <Mail size={18} color={COLORS.clayDeep} />
-        </div>
-        <div>
-          <div style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 700, color: COLORS.ink }}>I have an invite link</div>
-          <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>View your event as a client</div>
-        </div>
-      </button>
-      <button onClick={onChooseCode} style={cardStyle}>
-        <div style={{ width: 40, height: 40, borderRadius: "50%", background: COLORS.paperDeep, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <Stamp size={18} color={COLORS.inkSoft} />
-        </div>
-        <div>
-          <div style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 700, color: COLORS.ink }}>I have an access code</div>
-          <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>No email needed</div>
-        </div>
-      </button>
+      </div>
     </div>
   );
 }
@@ -4020,7 +4432,7 @@ function ClientInviteLanding({ onBack }) {
 
 /* ---------------- Top Nav ---------------- */
 
-function TopNav({ role, inEvent, onBackToDashboard, onSignOut, isAdmin, isPreview, pendingCount, onOpenQueue, onOpenTeam, pushSupported: showPush, pushPermission, pushSubscribed, onEnablePush }) {
+function TopNav({ role, inEvent, onBackToDashboard, onSignOut, isAdmin, isPreview, pendingCount, onOpenQueue, onOpenTeam, onOpenFinance, pushSupported: showPush, pushPermission, pushSubscribed, onEnablePush }) {
   return (
     <div
       style={{
@@ -4077,6 +4489,18 @@ function TopNav({ role, inEvent, onBackToDashboard, onSignOut, isAdmin, isPrevie
             }}
           >
             <Users size={13} /> Team
+          </button>
+        )}
+        {isAdmin && !inEvent && (
+          <button
+            onClick={onOpenFinance}
+            style={{
+              display: "flex", alignItems: "center", gap: 6, background: "none",
+              border: `1px solid ${COLORS.line}`, borderRadius: 999, padding: "6px 12px",
+              color: COLORS.ink, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12, cursor: "pointer",
+            }}
+          >
+            <Banknote size={13} /> Finance
           </button>
         )}
         {isAdmin && !inEvent && (
@@ -4230,6 +4654,7 @@ export default function BitAffairs() {
   const [creatingProject, setCreatingProject] = useState(false);
   const [viewingQueue, setViewingQueue] = useState(false);
   const [viewingTeam, setViewingTeam] = useState(false);
+  const [viewingFinance, setViewingFinance] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [pushPermission, setPushPermission] = useState(pushSupported ? Notification.permission : "unsupported");
   const [pushSubscribed, setPushSubscribed] = useState(() => {
@@ -4779,6 +5204,16 @@ export default function BitAffairs() {
     }
   };
 
+  const handleUpdateVendorBalanceDueDate = async (eventId, vendorId, date) => {
+    try {
+      await sbUpdateVendorBalanceDueDate(vendorId, date);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to update vendor balance due date", err);
+      throw err;
+    }
+  };
+
   const handleAddClientPayment = async (eventId, amount, dateSent) => {
     try {
       await sbAddClientPayment(eventId, amount, dateSent);
@@ -4795,6 +5230,66 @@ export default function BitAffairs() {
       await refreshEvent(eventId);
     } catch (err) {
       console.error("Failed to delete client payment", err);
+    }
+  };
+
+  const handleUpdateEventBalanceDueDate = async (eventId, date) => {
+    try {
+      await sbUpdateEventBalanceDueDate(eventId, date);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to update event balance due date", err);
+      throw err;
+    }
+  };
+
+  const handleAddRunSheetItem = async (eventId, fields) => {
+    try {
+      await sbAddRunSheetItem(eventId, fields);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to add run sheet item", err);
+      throw err;
+    }
+  };
+
+  const handleUpdateRunSheetItem = async (eventId, itemId, fields) => {
+    try {
+      await sbUpdateRunSheetItem(itemId, fields);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to update run sheet item", err);
+      throw err;
+    }
+  };
+
+  const handleDeleteRunSheetItem = async (eventId, itemId) => {
+    try {
+      await sbDeleteRunSheetItem(itemId);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to delete run sheet item", err);
+    }
+  };
+
+  // Swap positions with the neighboring item — the simplest reorder
+  // primitive that doesn't need drag-and-drop. openEvent is read fresh
+  // here (not passed a stale items array) since this can run right after
+  // an add/delete changed the list.
+  const handleMoveRunSheetItem = async (eventId, itemId, direction) => {
+    const event = eventsRef.current.find((e) => e.id === eventId) || (openEvent?.id === eventId ? openEvent : null);
+    const items = [...(event?.runSheet || [])].sort((a, b) => a.position - b.position);
+    const index = items.findIndex((i) => i.id === itemId);
+    const swapWith = direction === "up" ? index - 1 : index + 1;
+    if (index === -1 || swapWith < 0 || swapWith >= items.length) return;
+    try {
+      await Promise.all([
+        sbSetRunSheetItemPosition(items[index].id, items[swapWith].position),
+        sbSetRunSheetItemPosition(items[swapWith].id, items[index].position),
+      ]);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to reorder run sheet item", err);
     }
   };
 
@@ -4870,17 +5365,19 @@ export default function BitAffairs() {
   }
 
   if (!session) {
+    if (gateStep === "welcome") {
+      return (
+        <BoldWelcomeScreen
+          onChoosePlanner={() => setGateStep("planner")}
+          onChooseClient={() => setGateStep("client")}
+          onChooseCode={() => setGateStep("code")}
+        />
+      );
+    }
     return (
       <div style={{ minHeight: "100vh", background: COLORS.paper, color: COLORS.ink }}>
         <style>{`${FONT_IMPORT} * { box-sizing: border-box; } input::placeholder { color: ${COLORS.inkFaint}; }`}</style>
         <AuthShell>
-          {gateStep === "welcome" && (
-            <WelcomeGate
-              onChoosePlanner={() => setGateStep("planner")}
-              onChooseClient={() => setGateStep("client")}
-              onChooseCode={() => setGateStep("code")}
-            />
-          )}
           {gateStep === "planner" && (
             <PlannerLoginForm
               onBack={() => setGateStep("welcome")}
@@ -5025,6 +5522,7 @@ export default function BitAffairs() {
           setOpenEventId(null);
           setViewingQueue(false);
           setViewingTeam(false);
+          setViewingFinance(false);
           setRole("studio");
         }}
         onSignOut={async () => {
@@ -5038,6 +5536,7 @@ export default function BitAffairs() {
           setOpenEventId(null);
           setViewingQueue(false);
           setViewingTeam(false);
+          setViewingFinance(false);
           setEvents([]);
           setRole("studio");
         }}
@@ -5047,12 +5546,20 @@ export default function BitAffairs() {
         onOpenQueue={() => {
           setOpenEventId(null);
           setViewingTeam(false);
+          setViewingFinance(false);
           setViewingQueue(true);
         }}
         onOpenTeam={() => {
           setOpenEventId(null);
           setViewingQueue(false);
+          setViewingFinance(false);
           setViewingTeam(true);
+        }}
+        onOpenFinance={() => {
+          setOpenEventId(null);
+          setViewingQueue(false);
+          setViewingTeam(false);
+          setViewingFinance(true);
         }}
         pushSupported={pushSupported && Boolean(VAPID_PUBLIC_KEY) && !needsClientEventChoice}
         pushPermission={pushPermission}
@@ -5061,7 +5568,9 @@ export default function BitAffairs() {
       />
 
       {!loaded ? null : role === "studio" ? (
-        viewingTeam ? (
+        viewingFinance ? (
+          <AgencyFinancials events={events} onBack={() => setViewingFinance(false)} />
+        ) : viewingTeam ? (
           <TeamManagement
             onBack={() => setViewingTeam(false)}
             currentPlannerId={session?.plannerId}
@@ -5074,6 +5583,7 @@ export default function BitAffairs() {
               setOpenEventId(null);
               setViewingQueue(false);
               setViewingTeam(false);
+              setViewingFinance(false);
               setEvents([]);
               setRole("studio");
             }}
@@ -5116,9 +5626,15 @@ export default function BitAffairs() {
             onUpdateVendorCost={(vendorId, cost) => handleUpdateVendorCost(openEvent.id, vendorId, cost)}
             onUpdateVendorDeposit={(vendorId, deposit) => handleUpdateVendorDeposit(openEvent.id, vendorId, deposit)}
             onUpdateVendorDetails={(vendorId, details) => handleUpdateVendorDetails(openEvent.id, vendorId, details)}
+            onUpdateVendorBalanceDueDate={(vendorId, date) => handleUpdateVendorBalanceDueDate(openEvent.id, vendorId, date)}
             onDeleteVendor={(vendorId) => handleDeleteVendor(openEvent.id, vendorId)}
             onAddClientPayment={(amount, dateSent) => handleAddClientPayment(openEvent.id, amount, dateSent)}
             onDeleteClientPayment={(paymentId) => handleDeleteClientPayment(openEvent.id, paymentId)}
+            onUpdateEventBalanceDueDate={(date) => handleUpdateEventBalanceDueDate(openEvent.id, date)}
+            onAddRunSheetItem={(fields) => handleAddRunSheetItem(openEvent.id, fields)}
+            onUpdateRunSheetItem={(itemId, fields) => handleUpdateRunSheetItem(openEvent.id, itemId, fields)}
+            onDeleteRunSheetItem={(itemId) => handleDeleteRunSheetItem(openEvent.id, itemId)}
+            onMoveRunSheetItem={(itemId, direction) => handleMoveRunSheetItem(openEvent.id, itemId, direction)}
             onSendMessage={(message) => handleSendMessage(openEvent.id, message)}
             onDeleteMessage={(messageId) => handleDeleteMessage(openEvent.id, messageId)}
             onPreviewClient={() => {
