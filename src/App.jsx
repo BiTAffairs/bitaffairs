@@ -28,6 +28,7 @@ import {
   updateVendorBalanceDueDate as sbUpdateVendorBalanceDueDate, updateEventBalanceDueDate as sbUpdateEventBalanceDueDate,
   addRunSheetItem as sbAddRunSheetItem, updateRunSheetItem as sbUpdateRunSheetItem,
   deleteRunSheetItem as sbDeleteRunSheetItem, setRunSheetItemPosition as sbSetRunSheetItemPosition,
+  addReminder as sbAddReminder, updateReminder as sbUpdateReminder, deleteReminder as sbDeleteReminder,
   addClientPayment as sbAddClientPayment, deleteClientPayment as sbDeleteClientPayment,
   createEvent as sbCreateEvent, inviteClient as sbInviteClient,
   invitePlanner, fetchTeamMembers, updatePlannerRole, removePlanner, deleteAccount,
@@ -1347,13 +1348,18 @@ function TaskRequestRow({ request, phases, isAdmin, onApprove, onDismiss }) {
 
 /* ---------------- Budget ---------------- */
 
-function BudgetView({ budget, vendors, clientPayments, clientBalanceDueDate, onUpdateBalanceDueDate, readOnly = false }) {
+function BudgetView({ budget, vendorSpendTotal, clientPayments, clientBalanceDueDate, onUpdateBalanceDueDate, readOnly = false }) {
   // "Paid to confirmed vendors" reflects actual money out the door — the
   // deposit, not the full contract price (0024_vendor_deposit.sql). A
   // vendor confirmed at ₦500,000 with a ₦100,000 deposit only counts as
   // ₦100,000 spent here; the remaining ₦400,000 shows on their own line
   // as balance owed, not as budget already spent.
-  const vendorSpend = (vendors || []).filter((v) => v.status === "confirmed").reduce((s, v) => s + (v.deposit || 0), 0);
+  //
+  // This total is computed server-side (0033_finance_view_restore.sql)
+  // rather than summed from individual vendor rows here — those rows'
+  // deposit/cost figures are masked (null) for team members, who can see
+  // this aggregate but not which vendor is being paid what.
+  const vendorSpend = vendorSpendTotal || 0;
   const remaining = budget.total - vendorSpend;
   const overBudget = remaining < 0;
   const pct = budget.total > 0 ? Math.round((vendorSpend / budget.total) * 100) : 0;
@@ -1811,6 +1817,201 @@ function RunSheetView({ items, onAdd, onUpdate, onDelete, onMove }) {
   );
 }
 
+/* ---------------- Reminders ---------------- */
+
+// Distinct from the run sheet (day-of timeline, implicitly "on the event
+// day") and from tasks (planning-stage checklist, no specific date) — a
+// reminder has a real date because it might be set days or weeks ahead.
+// View open to any org planner; only admins create, edit, or delete.
+function RemindersView({ reminders, teamMembers, onAdd, onUpdate, onDelete, readOnly = false }) {
+  const [title, setTitle] = useState("");
+  const [date, setDate] = useState("");
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
+  const [involvedText, setInvolvedText] = useState("");
+  const [assignees, setAssignees] = useState([]);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editState, setEditState] = useState(null);
+
+  const sorted = [...(reminders || [])].sort((a, b) => (a.date + (a.startTime || "")).localeCompare(b.date + (b.startTime || "")));
+
+  const toggleAssignee = (id, setter, current) => {
+    setter(current.includes(id) ? current.filter((x) => x !== id) : [...current, id]);
+  };
+
+  const resetForm = () => {
+    setTitle(""); setDate(""); setStartTime(""); setEndTime(""); setInvolvedText(""); setAssignees([]);
+  };
+
+  const submit = async () => {
+    if (!title.trim() || !date) {
+      setError("A title and date are both required.");
+      return;
+    }
+    setError("");
+    setSaving(true);
+    try {
+      await onAdd({
+        title: clampText(title, LIMITS.shortText), date, startTime, endTime,
+        involvedText: clampText(involvedText, LIMITS.shortText), assigneePlannerIds: assignees,
+      });
+      resetForm();
+    } catch (err) {
+      setError(err?.message || "Couldn't save that reminder.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startEdit = (r) => {
+    setEditingId(r.id);
+    setEditState({ title: r.title, date: r.date, startTime: r.startTime || "", endTime: r.endTime || "", involvedText: r.involvedText || "", assignees: r.assigneeIds || [] });
+  };
+
+  const saveEdit = async (id) => {
+    if (!editState.title.trim() || !editState.date) return;
+    await onUpdate(id, {
+      title: clampText(editState.title, LIMITS.shortText), date: editState.date,
+      startTime: editState.startTime, endTime: editState.endTime,
+      involvedText: clampText(editState.involvedText, LIMITS.shortText), assigneePlannerIds: editState.assignees,
+    });
+    setEditingId(null);
+  };
+
+  const inputStyle = {
+    fontFamily: FONT_BODY, fontSize: 13, padding: "9px 12px", border: `1px solid ${COLORS.line}`,
+    borderRadius: 4, background: COLORS.paper, color: COLORS.ink, outline: "none",
+  };
+  const pillStyle = (active) => ({
+    display: "flex", alignItems: "center", gap: 5, fontFamily: FONT_BODY, fontSize: 12,
+    color: COLORS.inkSoft, cursor: "pointer", padding: "3px 8px", borderRadius: 999,
+    border: `1px solid ${COLORS.line}`, background: active ? COLORS.brassPale : "transparent",
+  });
+
+  const formatWhen = (r) => {
+    let when = r.date;
+    if (r.startTime) when += ` · ${r.startTime.slice(0, 5)}`;
+    if (r.endTime) when += `–${r.endTime.slice(0, 5)}`;
+    return when;
+  };
+
+  return (
+    <SectionCard>
+      <SectionTitle>Reminders</SectionTitle>
+      {sorted.length === 0 && (
+        <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkFaint, marginBottom: 16 }}>
+          No reminders yet.
+        </div>
+      )}
+      {sorted.map((r, i) => (
+        <div key={r.id} style={{ padding: "12px 0", borderBottom: i < sorted.length - 1 ? `1px solid ${COLORS.line}` : "none" }}>
+          {editingId === r.id ? (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 130px 100px 100px", gap: 8 }}>
+                <input style={inputStyle} value={editState.title} onChange={(e) => setEditState({ ...editState, title: e.target.value })} placeholder="What needs to happen" />
+                <input style={inputStyle} type="date" value={editState.date} onChange={(e) => setEditState({ ...editState, date: e.target.value })} />
+                <input style={inputStyle} type="time" value={editState.startTime} onChange={(e) => setEditState({ ...editState, startTime: e.target.value })} />
+                <input style={inputStyle} type="time" value={editState.endTime} onChange={(e) => setEditState({ ...editState, endTime: e.target.value })} />
+              </div>
+              <input
+                style={{ ...inputStyle, width: "100%", marginTop: 8 }}
+                value={editState.involvedText}
+                onChange={(e) => setEditState({ ...editState, involvedText: e.target.value })}
+                placeholder="Who or what's involved (free text, e.g. florist, caterer)"
+              />
+              {teamMembers && teamMembers.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                  {teamMembers.map((m) => (
+                    <label key={m.id} style={pillStyle(editState.assignees.includes(m.id))}>
+                      <input type="checkbox" checked={editState.assignees.includes(m.id)} onChange={() => toggleAssignee(m.id, (v) => setEditState({ ...editState, assignees: v(editState.assignees) }), editState.assignees)} style={{ margin: 0 }} />
+                      {m.name}
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button onClick={() => saveEdit(r.id)} style={{ padding: "6px 12px", borderRadius: 4, border: "none", background: COLORS.ink, color: COLORS.card, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                  Save
+                </button>
+                <button onClick={() => setEditingId(null)} style={{ padding: "6px 12px", borderRadius: 4, border: `1px solid ${COLORS.line}`, background: "transparent", color: COLORS.inkSoft, fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12, cursor: "pointer" }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 600, color: COLORS.ink }}>{r.title}</div>
+                <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>{formatWhen(r)}</div>
+                {(r.involvedText || (r.assigneeIds && r.assigneeIds.length > 0)) && (
+                  <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkFaint, marginTop: 4 }}>
+                    {[
+                      r.involvedText,
+                      ...(r.assigneeIds || []).map((id) => teamMembers?.find((m) => m.id === id)?.name).filter(Boolean),
+                    ].filter(Boolean).join(" · ")}
+                  </div>
+                )}
+              </div>
+              {!readOnly && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <button onClick={() => startEdit(r)} title="Edit" style={{ display: "flex", background: "none", border: "none", color: COLORS.inkFaint, cursor: "pointer", padding: 4 }}>
+                    <Pencil size={13} />
+                  </button>
+                  <button onClick={() => onDelete(r.id)} title="Delete" style={{ display: "flex", background: "none", border: "none", color: COLORS.inkFaint, cursor: "pointer", padding: 4 }}>
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+
+      {!readOnly && (
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px dashed ${COLORS.line}` }}>
+          <Eyebrow>Add a reminder</Eyebrow>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 130px 100px 100px", gap: 8, marginTop: 10 }}>
+            <input style={inputStyle} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs to happen" />
+            <input style={inputStyle} type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <input style={inputStyle} type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+            <input style={inputStyle} type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+          </div>
+          <input
+            style={{ ...inputStyle, width: "100%", marginTop: 8 }}
+            value={involvedText}
+            onChange={(e) => setInvolvedText(e.target.value)}
+            placeholder="Who or what's involved (free text, e.g. florist, caterer)"
+          />
+          {teamMembers && teamMembers.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+              {teamMembers.map((m) => (
+                <label key={m.id} style={pillStyle(assignees.includes(m.id))}>
+                  <input type="checkbox" checked={assignees.includes(m.id)} onChange={() => toggleAssignee(m.id, setAssignees, assignees)} style={{ margin: 0 }} />
+                  {m.name}
+                </label>
+              ))}
+            </div>
+          )}
+          {error && <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.clayDeep, marginTop: 8 }}>{error}</div>}
+          <button
+            onClick={submit}
+            disabled={saving}
+            style={{
+              marginTop: 10, display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 4, border: "none",
+              background: COLORS.brass, color: COLORS.card, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
+              cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1,
+            }}
+          >
+            <Plus size={14} /> {saving ? "Adding…" : "Add reminder"}
+          </button>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 // A single vendor row — display mode, edit mode (name/category/contact),
 // and a delete-with-confirm action. Phone/cost/deposit keep their own
 // existing inline-edit behavior (VendorMoneyField, the phone input)
@@ -1826,8 +2027,12 @@ function VendorRow({ vendor: v, readOnly, onCycleStatus, onUpdatePhone, onUpdate
   const [saving, setSaving] = useState(false);
 
   const tag = vendorStatusTag(v.status);
-  const balance = Math.max(0, v.cost - (v.deposit || 0));
-  const isOverdue = balance > 0 && v.balanceDueDate && v.balanceDueDate < todayISO();
+  // cost comes back null for a team member (0033_finance_view_restore.sql
+  // masks it) — treat that as "hidden", not as zero, so nothing here
+  // computes or displays a misleading number.
+  const financeHidden = v.cost == null;
+  const balance = financeHidden ? null : Math.max(0, v.cost - (v.deposit || 0));
+  const isOverdue = !financeHidden && balance > 0 && v.balanceDueDate && v.balanceDueDate < todayISO();
 
   const saveEdit = async () => {
     if (!name.trim() || !category.trim()) {
@@ -1951,21 +2156,25 @@ function VendorRow({ vendor: v, readOnly, onCycleStatus, onUpdatePhone, onUpdate
         )}
       </div>
       <div style={{ fontFamily: FONT_MONO, fontSize: 13, color: COLORS.inkSoft, minWidth: 100, textAlign: "right" }}>
-        {readOnly ? currency(v.cost) : <VendorMoneyField value={v.cost} onSave={onUpdateCost} />}
+        {financeHidden ? null : readOnly ? currency(v.cost) : <VendorMoneyField value={v.cost} onSave={onUpdateCost} />}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 100, textAlign: "right" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
-          <span style={{ fontFamily: FONT_BODY, fontSize: 10, color: COLORS.inkFaint }}>Deposit</span>
-          {readOnly ? (
-            <span style={{ fontFamily: FONT_MONO, fontSize: 12, color: COLORS.inkSoft }}>{currency(v.deposit || 0)}</span>
-          ) : (
-            <VendorMoneyField value={v.deposit || 0} onSave={onUpdateDeposit} />
-          )}
-        </div>
-        <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: isOverdue ? COLORS.clayDeep : COLORS.inkFaint }}>
-          Balance {currency(balance)}
-        </div>
-        {!readOnly && balance > 0 && (
+        {financeHidden ? null : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
+              <span style={{ fontFamily: FONT_BODY, fontSize: 10, color: COLORS.inkFaint }}>Deposit</span>
+              {readOnly ? (
+                <span style={{ fontFamily: FONT_MONO, fontSize: 12, color: COLORS.inkSoft }}>{currency(v.deposit || 0)}</span>
+              ) : (
+                <VendorMoneyField value={v.deposit || 0} onSave={onUpdateDeposit} />
+              )}
+            </div>
+            <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: isOverdue ? COLORS.clayDeep : COLORS.inkFaint }}>
+              Balance {currency(balance)}
+            </div>
+          </>
+        )}
+        {!readOnly && !financeHidden && balance > 0 && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
             <span style={{ fontFamily: FONT_BODY, fontSize: 10, color: isOverdue ? COLORS.clayDeep : COLORS.inkFaint }}>
               {isOverdue ? "Overdue —" : "Due"}
@@ -2739,7 +2948,7 @@ function AgencyFinancials({ events, onBack }) {
   const rows = (events || []).map((e) => {
     const vendors = e.vendors || [];
     const confirmedVendors = vendors.filter((v) => v.status === "confirmed");
-    const vendorCost = confirmedVendors.reduce((s, v) => s + v.cost, 0);
+    const vendorCost = confirmedVendors.reduce((s, v) => s + (v.cost || 0), 0);
     const vendorPaid = confirmedVendors.reduce((s, v) => s + (v.deposit || 0), 0);
     const vendorBalance = Math.max(0, vendorCost - vendorPaid);
     const vendorOverdue = confirmedVendors.some(
@@ -3395,7 +3604,7 @@ function DeleteAccountControl({ isSelf, onDelete }) {
   );
 }
 
-function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask, onAddTask, onDeleteTask, onSubmitProposalReview, onSendProposal, onRejectProposal, onResetProposal, onOpenDocument, onAddProposalItem, onUpdateProposalItem, onDeleteProposalItem, onRequestApproval, onReleaseApproval, onEditApproval, onDeleteApproval, onAddVendor, onCycleVendorStatus, onUpdateVendorPhone, onUpdateVendorCost, onUpdateVendorDeposit, onUpdateVendorDetails, onUpdateVendorBalanceDueDate, onDeleteVendor, onAddClientPayment, onDeleteClientPayment, onUpdateEventBalanceDueDate, onAddRunSheetItem, onUpdateRunSheetItem, onDeleteRunSheetItem, onMoveRunSheetItem, onSendMessage, onDeleteMessage, onPreviewClient, onDeleteProject, onApproveTaskRequest, onDismissTaskRequest }) {
+function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask, onAddTask, onDeleteTask, onSubmitProposalReview, onSendProposal, onRejectProposal, onResetProposal, onOpenDocument, onAddProposalItem, onUpdateProposalItem, onDeleteProposalItem, onRequestApproval, onReleaseApproval, onEditApproval, onDeleteApproval, onAddVendor, onCycleVendorStatus, onUpdateVendorPhone, onUpdateVendorCost, onUpdateVendorDeposit, onUpdateVendorDetails, onUpdateVendorBalanceDueDate, onDeleteVendor, onAddClientPayment, onDeleteClientPayment, onUpdateEventBalanceDueDate, onAddRunSheetItem, onUpdateRunSheetItem, onDeleteRunSheetItem, onMoveRunSheetItem, onAddReminder, onUpdateReminder, onDeleteReminder, onSendMessage, onDeleteMessage, onPreviewClient, onDeleteProject, onApproveTaskRequest, onDismissTaskRequest }) {
   const [tab, setTab] = useState("overview");
   const pct = progressOf(event);
 
@@ -3454,6 +3663,7 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
           ["budget", "Budget", Wallet],
           ["payments", "Client payments", Banknote],
           ["runsheet", "Run sheet", Clock],
+          ["reminders", "Reminders", Bell],
         ].map(([key, label, Icon]) => (
           <button
             key={key}
@@ -3520,7 +3730,18 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
         <ApprovalsList approvals={event.approvals} editable isAdmin={isAdmin} onRequest={onRequestApproval} onRelease={onReleaseApproval} onEdit={onEditApproval} onDelete={onDeleteApproval} />
       )}
       {tab === "vendors" && (
-        <VendorsView vendors={event.vendors || []} onAddVendor={onAddVendor} onCycleStatus={onCycleVendorStatus} onUpdatePhone={onUpdateVendorPhone} onUpdateCost={onUpdateVendorCost} onUpdateDeposit={onUpdateVendorDeposit} onUpdateDetails={onUpdateVendorDetails} onUpdateBalanceDueDate={onUpdateVendorBalanceDueDate} onDeleteVendor={onDeleteVendor} />
+        <VendorsView
+          vendors={event.vendors || []}
+          onAddVendor={onAddVendor}
+          onCycleStatus={onCycleVendorStatus}
+          onUpdatePhone={onUpdateVendorPhone}
+          onUpdateCost={onUpdateVendorCost}
+          onUpdateDeposit={onUpdateVendorDeposit}
+          onUpdateDetails={onUpdateVendorDetails}
+          onUpdateBalanceDueDate={onUpdateVendorBalanceDueDate}
+          onDeleteVendor={onDeleteVendor}
+          readOnly={!isAdmin}
+        />
       )}
       {tab === "messages" && (
         <MessageThread
@@ -3537,10 +3758,11 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
       {tab === "budget" && (
         <BudgetView
           budget={event.budget}
-          vendors={event.vendors}
+          vendorSpendTotal={event.vendorSpendTotal}
           clientPayments={event.clientPayments}
           clientBalanceDueDate={event.clientBalanceDueDate}
           onUpdateBalanceDueDate={onUpdateEventBalanceDueDate}
+          readOnly={!isAdmin}
         />
       )}
       {tab === "payments" && (
@@ -3548,6 +3770,7 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
           payments={event.clientPayments || []}
           onAdd={(amount, dateSent) => onAddClientPayment(amount, dateSent)}
           onDelete={onDeleteClientPayment}
+          readOnly={!isAdmin}
         />
       )}
       {tab === "runsheet" && (
@@ -3557,6 +3780,16 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
           onUpdate={(itemId, fields) => onUpdateRunSheetItem(itemId, fields)}
           onDelete={(itemId) => onDeleteRunSheetItem(itemId)}
           onMove={(itemId, direction) => onMoveRunSheetItem(itemId, direction)}
+        />
+      )}
+      {tab === "reminders" && (
+        <RemindersView
+          reminders={event.reminders || []}
+          teamMembers={event.teamMembers}
+          onAdd={(fields) => onAddReminder(fields)}
+          onUpdate={(id, fields) => onUpdateReminder(id, fields)}
+          onDelete={(id) => onDeleteReminder(id)}
+          readOnly={!isAdmin}
         />
       )}
     </div>
@@ -3653,7 +3886,7 @@ function ClientPortal({ event, onToggleTask, onApproveProposal, onDisapproveProp
 
         <VendorsView vendors={event.vendors || []} readOnly />
 
-        <BudgetView budget={event.budget} vendors={event.vendors} clientPayments={event.clientPayments} clientBalanceDueDate={event.clientBalanceDueDate} readOnly />
+        <BudgetView budget={event.budget} vendorSpendTotal={event.vendorSpendTotal} clientPayments={event.clientPayments} clientBalanceDueDate={event.clientBalanceDueDate} readOnly />
 
         <ClientPaymentsView payments={event.clientPayments || []} readOnly />
 
@@ -5392,6 +5625,35 @@ export default function BitAffairs() {
     }
   };
 
+  const handleAddReminder = async (eventId, fields) => {
+    try {
+      await sbAddReminder(eventId, fields);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to add reminder", err);
+      throw err;
+    }
+  };
+
+  const handleUpdateReminder = async (eventId, id, fields) => {
+    try {
+      await sbUpdateReminder(id, fields);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to update reminder", err);
+      throw err;
+    }
+  };
+
+  const handleDeleteReminder = async (eventId, id) => {
+    try {
+      await sbDeleteReminder(id);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to delete reminder", err);
+    }
+  };
+
   const handleSendMessage = async (eventId, message) => {
     try {
       await sbSendMessage(eventId, message.authorType, message.authorName, message.body, message.imageData);
@@ -5734,6 +5996,9 @@ export default function BitAffairs() {
             onUpdateRunSheetItem={(itemId, fields) => handleUpdateRunSheetItem(openEvent.id, itemId, fields)}
             onDeleteRunSheetItem={(itemId) => handleDeleteRunSheetItem(openEvent.id, itemId)}
             onMoveRunSheetItem={(itemId, direction) => handleMoveRunSheetItem(openEvent.id, itemId, direction)}
+            onAddReminder={(fields) => handleAddReminder(openEvent.id, fields)}
+            onUpdateReminder={(id, fields) => handleUpdateReminder(openEvent.id, id, fields)}
+            onDeleteReminder={(id) => handleDeleteReminder(openEvent.id, id)}
             onSendMessage={(message) => handleSendMessage(openEvent.id, message)}
             onDeleteMessage={(messageId) => handleDeleteMessage(openEvent.id, messageId)}
             onPreviewClient={() => {

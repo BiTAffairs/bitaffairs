@@ -62,6 +62,9 @@ export function assembleEventFromSupabase(eventRow, detail) {
       total: eventRow.budget_total || 0,
       items: detail.budgetItems.map((b) => ({ label: b.label, planned: b.planned, actual: b.actual })),
     },
+    // 0033_finance_view_restore.sql — server-computed, since vendors'
+    // individual deposit figures may be masked (null) for this caller.
+    vendorSpendTotal: detail.vendorSpendTotal || 0,
     proposal: detail.proposal
       ? {
           items: proposalItems,
@@ -76,7 +79,7 @@ export function assembleEventFromSupabase(eventRow, detail) {
       status: a.status, requestedAt: a.requested_at, approvedAt: a.approved_at, disapprovedAt: a.disapproved_at,
     })),
     vendors: detail.vendors.map((v) => ({
-      id: v.id, name: v.name, category: v.category, contact: v.contact, phone: v.phone, cost: v.cost, deposit: v.deposit || 0,
+      id: v.id, name: v.name, category: v.category, contact: v.contact, phone: v.phone, cost: v.cost, deposit: v.deposit,
       balanceDueDate: v.balance_due_date || null, status: v.status,
     })),
     // 0025_client_payments.sql — money the client has sent the agency,
@@ -91,6 +94,23 @@ export function assembleEventFromSupabase(eventRow, detail) {
     // by position from the fetch.
     runSheet: (detail.runSheetItems || []).map((r) => ({
       id: r.id, timeLabel: r.time_label || "", title: r.title, notes: r.notes || "", position: r.position,
+    })),
+    // 0034_reminders.sql — view open to all org planners, admin-only to
+    // write. assigneeIds are raw planner ids; the UI resolves these
+    // against event.teamMembers for display rather than duplicating name
+    // data onto every reminder.
+    reminders: (detail.reminders || []).map((r) => ({
+      id: r.id, title: r.title, date: r.reminder_date, startTime: r.start_time, endTime: r.end_time,
+      involvedText: r.involved_text || "",
+      assigneeIds: (r.reminder_assignees || []).map((a) => a.planner_id),
+    })),
+    // 0032_pending_changes.sql — team-member requests awaiting admin
+    // decision (or already decided, kept around for history). Team
+    // members only ever see their own via RLS; admins see everyone's.
+    pendingChanges: (detail.pendingChanges || []).map((p) => ({
+      id: p.id, requestedBy: p.requested_by, action: p.action, payload: p.payload,
+      summary: p.summary, status: p.status, createdAt: p.created_at,
+      reviewedAt: p.reviewed_at, reviewedBy: p.reviewed_by,
     })),
     messages: detail.messages.map((m) => ({
       id: m.id, authorType: m.author_type, authorName: m.author_name,

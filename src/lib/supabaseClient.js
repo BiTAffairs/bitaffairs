@@ -161,7 +161,7 @@ export async function fetchEvents() {
 }
 
 export async function fetchEventDetail(eventId) {
-  const [phases, tasks, proposal, proposalItems, approvals, vendors, budgetItems, clientPayments, runSheetItems, messages, members, taskRequests] = await Promise.all([
+  const [phases, tasks, proposal, proposalItems, approvals, vendors, budgetItems, clientPayments, runSheetItems, reminders, pendingChanges, messages, members, taskRequests, vendorSpendTotal] = await Promise.all([
     requireSupabase().from("phases").select("*").eq("event_id", eventId).order("position"),
     requireSupabase().from("tasks").select("*").in(
       "phase_id",
@@ -170,10 +170,15 @@ export async function fetchEventDetail(eventId) {
     requireSupabase().from("proposals").select("*").eq("event_id", eventId).maybeSingle(),
     requireSupabase().from("proposal_items").select("*").eq("event_id", eventId),
     requireSupabase().from("approvals").select("*").eq("event_id", eventId).order("requested_at"),
-    requireSupabase().from("vendors").select("*").eq("event_id", eventId), // clients can read these too — see 0009_client_vendors_budget.sql
-    requireSupabase().from("budget_items").select("*").eq("event_id", eventId), // clients can read these too — see 0009_client_vendors_budget.sql
-    requireSupabase().from("client_payments").select("*").eq("event_id", eventId).order("date_sent", { ascending: false }), // clients can read these too — see 0025_client_payments.sql
+    requireSupabase().from("vendors_for_planner").select("*").eq("event_id", eventId), // financial columns masked for non-admins — see 0033_finance_view_restore.sql
+    requireSupabase().from("budget_items").select("*").eq("event_id", eventId), // view/edit both admin-only — see 0033_finance_view_restore.sql
+    requireSupabase().from("client_payments").select("*").eq("event_id", eventId).order("date_sent", { ascending: false }), // view/edit both admin-only — see 0033_finance_view_restore.sql
     requireSupabase().from("run_sheet_items").select("*").eq("event_id", eventId).order("position"), // planner-only, no client read policy — see 0027_run_sheet.sql
+    requireSupabase().from("reminders").select("*, reminder_assignees(planner_id)").eq("event_id", eventId).order("reminder_date").order("start_time"), // view open to all org planners, write admin-only — see 0034_reminders.sql
+    // Team members see their own requests; admins see everyone's — see
+    // 0032_pending_changes.sql. Ordered newest-first so the review queue
+    // doesn't need to re-sort.
+    requireSupabase().from("pending_changes").select("*").eq("event_id", eventId).order("created_at", { ascending: false }),
     requireSupabase().from("messages").select("*").eq("event_id", eventId).order("created_at"),
     // planner_id is required here (not just email/display_name) so the UI
     // can appoint specific people to a restricted task — see task_assignees.
@@ -181,6 +186,11 @@ export async function fetchEventDetail(eventId) {
     // Empty for team members, planner-and-up + client-owned rows only —
     // see 0011_client_task_requests.sql.
     requireSupabase().from("task_requests").select("*").eq("event_id", eventId).order("requested_at", { ascending: false }),
+    // Server-computed aggregate — see 0033_finance_view_restore.sql. Used
+    // instead of summing vendors_for_planner's deposit column client-side,
+    // since that column is null for team members; this returns the
+    // correct total either way without ever exposing per-vendor figures.
+    requireSupabase().rpc("vendor_spend_total", { p_event_id: eventId }),
   ]);
 
   // task_assignees isn't scoped by event_id directly (it hangs off tasks),
@@ -201,9 +211,12 @@ export async function fetchEventDetail(eventId) {
     budgetItems: budgetItems.data ?? [],
     clientPayments: clientPayments.data ?? [],
     runSheetItems: runSheetItems.data ?? [],
+    reminders: reminders.data ?? [],
+    pendingChanges: pendingChanges.data ?? [],
     messages: messages.data ?? [],
     members: members.data ?? [],
     taskRequests: taskRequests.data ?? [],
+    vendorSpendTotal: vendorSpendTotal.data ?? 0,
     taskAssignees: taskAssignees.data ?? [],
   };
 }
@@ -569,6 +582,83 @@ export async function deleteRunSheetItem(itemId) {
 
 export async function setRunSheetItemPosition(itemId, position) {
   const { error } = await requireSupabase().from("run_sheet_items").update({ position }).eq("id", itemId);
+  if (error) throw error;
+}
+
+// Reminders (0034_reminders.sql) — admin-only to write, any org planner
+// can read. assigneePlannerIds is a plain array of planner ids; the join
+// table insert/delete is handled here so callers don't need to know
+// reminder_assignees exists at all.
+export async function addReminder(eventId, { title, date, startTime, endTime, involvedText, assigneePlannerIds }) {
+  const { data, error } = await requireSupabase()
+    .from("reminders")
+    .insert({
+      event_id: eventId, title, reminder_date: date,
+      start_time: startTime || null, end_time: endTime || null, involved_text: involvedText || null,
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+  if (assigneePlannerIds?.length) {
+    const { error: assigneeError } = await requireSupabase()
+      .from("reminder_assignees")
+      .insert(assigneePlannerIds.map((plannerId) => ({ reminder_id: data.id, planner_id: plannerId })));
+    if (assigneeError) throw assigneeError;
+  }
+}
+
+export async function updateReminder(id, { title, date, startTime, endTime, involvedText, assigneePlannerIds }) {
+  const { error } = await requireSupabase()
+    .from("reminders")
+    .update({
+      title, reminder_date: date, start_time: startTime || null, end_time: endTime || null, involved_text: involvedText || null,
+    })
+    .eq("id", id);
+  if (error) throw error;
+  // Simplest correct way to sync the assignee set on an edit: clear and
+  // re-insert, rather than diffing old vs new — this table only ever
+  // holds a handful of rows per reminder, so there's no real cost to it.
+  const { error: clearError } = await requireSupabase().from("reminder_assignees").delete().eq("reminder_id", id);
+  if (clearError) throw clearError;
+  if (assigneePlannerIds?.length) {
+    const { error: assigneeError } = await requireSupabase()
+      .from("reminder_assignees")
+      .insert(assigneePlannerIds.map((plannerId) => ({ reminder_id: id, planner_id: plannerId })));
+    if (assigneeError) throw assigneeError;
+  }
+}
+
+export async function deleteReminder(id) {
+  const { error } = await requireSupabase().from("reminders").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// Team-member change requests (0032_pending_changes.sql). action is one
+// of the PENDING_ACTIONS keys in App.jsx — that's where the payload shape
+// per action, and what happens on approval, both live.
+export async function submitChangeRequest(eventId, action, payload, summary) {
+  const { data: { user } } = await requireSupabase().auth.getUser();
+  const { error } = await requireSupabase().from("pending_changes").insert({
+    event_id: eventId, requested_by: user.id, action, payload, summary,
+  });
+  if (error) throw error;
+}
+
+export async function withdrawChangeRequest(id) {
+  const { error } = await requireSupabase().from("pending_changes").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// Approving doesn't happen here — see App.jsx's handleReviewChangeRequest,
+// which runs the actual action (reusing the same functions an admin would
+// call directly) before marking the request decided. This function only
+// ever records the decision itself.
+export async function decideChangeRequest(id, status) {
+  const { data: { user } } = await requireSupabase().auth.getUser();
+  const { error } = await requireSupabase()
+    .from("pending_changes")
+    .update({ status, reviewed_at: new Date().toISOString(), reviewed_by: user.id })
+    .eq("id", id);
   if (error) throw error;
 }
 
