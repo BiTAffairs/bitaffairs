@@ -3,7 +3,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Users, Calendar, MapPin,
   Circle, CheckCircle2, Send, Stamp, FileText, Lock,
   Wallet, ListChecks, Eye, EyeOff, Building2, Truck, Printer, Mail, Phone, Bell, BellOff, Pencil,
-  MessageCircle, ImagePlus, Banknote, Clock, ChevronUp, ChevronDown
+  MessageCircle, ImagePlus, Banknote, Clock, ChevronUp, ChevronDown, LogOut
 } from "lucide-react";
 import {
   supabase, supabaseConfigured,
@@ -45,21 +45,34 @@ import { assembleEventFromSupabase } from "./lib/adapter";
    Ink / paper / brass — the paper trail of event production
 ----------------------------------------------------------------*/
 
-const COLORS = {
-  paper: "#F8F8F6",
-  paperDeep: "#EFEFEC",
-  card: "#FFFFFF",
-  ink: "#161616",
-  inkSoft: "#5A5A54",
-  inkFaint: "#8C8C86",
-  brass: "#D91E4B",
-  brassDeep: "#A01238",
-  brassPale: "#FBDCE4",
-  clay: "#C2410C",
-  clayDeep: "#8A2E08",
-  clayPale: "#FCE1D0",
-  line: "rgba(22,22,22,0.12)",
+// Theme tokens. COLORS values are CSS variables, so any screen can opt into
+// the dark palette by sitting under data-theme="dark"; light is the default
+// and resolves to exactly the colours this app has always used. The
+// variables live in one stylesheet injected at load (below) rather than in
+// every component, so changing a colour is a one-place edit.
+const THEME_LIGHT = {
+  paper: "#F8F8F6", paperDeep: "#EFEFEC", card: "#FFFFFF", ink: "#161616", inkSoft: "#5A5A54", inkFaint: "#8C8C86",
+  brass: "#D91E4B", brassDeep: "#A01238", brassPale: "#FBDCE4", clay: "#C2410C", clayDeep: "#8A2E08", clayPale: "#FCE1D0",
+  line: "rgba(22,22,22,0.12)", navBg: "rgba(239,237,228,0.92)",
 };
+const THEME_DARK = {
+  paper: "#141414", paperDeep: "#1A1A1A", card: "#1E1E1E", ink: "#FFFFFF", inkSoft: "rgba(255,255,255,0.62)", inkFaint: "rgba(255,255,255,0.4)",
+  brass: "#D91E4B", brassDeep: "#FF6B88", brassPale: "rgba(217,30,75,0.16)", clay: "#FF8A4C", clayDeep: "#FF9A7A", clayPale: "rgba(255,138,76,0.14)",
+  line: "rgba(255,255,255,0.1)", navBg: "rgba(20,20,20,0.92)",
+};
+const COLORS = {
+  paper: "var(--bit-paper)", paperDeep: "var(--bit-paperDeep)", card: "var(--bit-card)", ink: "var(--bit-ink)",
+  inkSoft: "var(--bit-inkSoft)", inkFaint: "var(--bit-inkFaint)", brass: "var(--bit-brass)", brassDeep: "var(--bit-brassDeep)",
+  brassPale: "var(--bit-brassPale)", clay: "var(--bit-clay)", clayDeep: "var(--bit-clayDeep)", clayPale: "var(--bit-clayPale)",
+  line: "var(--bit-line)", navBg: "var(--bit-navBg)",
+};
+if (typeof document !== "undefined" && !document.getElementById("bit-theme")) {
+  const toCss = (t) => Object.entries(t).map(([k, v]) => `--bit-${k}:${v}`).join(";");
+  const themeStyle = document.createElement("style");
+  themeStyle.id = "bit-theme";
+  themeStyle.textContent = `:root{${toCss(THEME_LIGHT)}}[data-theme="dark"]{${toCss(THEME_DARK)}}`;
+  document.head.appendChild(themeStyle);
+}
 
 const FONT_DISPLAY = "'Newsreader', serif";
 const FONT_BODY = "'IBM Plex Sans', sans-serif";
@@ -256,19 +269,18 @@ function ProgressRing({ pct, size = 56 }) {
   const offset = c - (pct / 100) * c;
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={COLORS.line} strokeWidth="5" />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" style={{ stroke: COLORS.line }} strokeWidth="5" />
       <circle
         cx={size / 2}
         cy={size / 2}
         r={r}
         fill="none"
-        stroke={COLORS.brass}
         strokeWidth="5"
         strokeDasharray={c}
         strokeDashoffset={offset}
         strokeLinecap="round"
         transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        style={{ transition: "stroke-dashoffset 0.5s ease" }}
+        style={{ stroke: COLORS.brass, transition: "stroke-dashoffset 0.5s ease" }}
       />
       <text
         x="50%"
@@ -384,7 +396,7 @@ function DisapproveStampButton({ onDisapprove, size = "md" }) {
           transition: "transform 0.18s ease, background 0.2s ease",
         }}
       >
-        <X size={dim * 0.36} color={COLORS.clayDeep} strokeWidth={2} />
+        <X size={dim * 0.36} style={{ color: COLORS.clayDeep }} strokeWidth={2} />
       </div>
       <span
         style={{
@@ -582,12 +594,12 @@ function PhaseChecklist({ phases, editable, isAdmin, onToggleTask, team, teamMem
                 }}
               >
                 {task.done ? (
-                  <CheckCircle2 size={17} color={COLORS.brass} strokeWidth={2} />
+                  <CheckCircle2 size={17} style={{ color: COLORS.brass }} strokeWidth={2} />
                 ) : (
-                  <Circle size={17} color={COLORS.inkFaint} strokeWidth={1.5} />
+                  <Circle size={17} style={{ color: COLORS.inkFaint }} strokeWidth={1.5} />
                 )}
                 {task.visibility === "restricted" && (
-                  <Lock size={12} color={COLORS.inkFaint} title="Private — only admins and appointed team members can see this" />
+                  <Lock size={12} style={{ color: COLORS.inkFaint }} title="Private — only admins and appointed team members can see this" />
                 )}
                 <span
                   style={{
@@ -1806,7 +1818,7 @@ function RunSheetView({ items, onAdd, onUpdate, onDelete, onMove }) {
           disabled={saving}
           style={{
             marginTop: 10, display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 4, border: "none",
-            background: COLORS.brass, color: COLORS.card, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
+            background: COLORS.brass, color: "#FFFFFF", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
             cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1,
           }}
         >
@@ -2000,7 +2012,7 @@ function RemindersView({ reminders, teamMembers, onAdd, onUpdate, onDelete, read
             disabled={saving}
             style={{
               marginTop: 10, display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 4, border: "none",
-              background: COLORS.brass, color: COLORS.card, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
+              background: COLORS.brass, color: "#FFFFFF", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
               cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1,
             }}
           >
@@ -2135,7 +2147,7 @@ function VendorRow({ vendor: v, readOnly, onCycleStatus, onUpdatePhone, onUpdate
         )}
         {(v.phone || !readOnly) && (
           <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
-            <Phone size={11} color={COLORS.inkFaint} />
+            <Phone size={11} style={{ color: COLORS.inkFaint }} />
             {readOnly ? (
               <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.inkFaint }}>{v.phone}</span>
             ) : (
@@ -2339,7 +2351,7 @@ function VendorsView({ vendors, onAddVendor, onCycleStatus, onUpdatePhone, onUpd
               borderRadius: 4,
               border: "none",
               background: COLORS.brass,
-              color: COLORS.card,
+              color: "#FFFFFF",
               fontFamily: FONT_BODY,
               fontWeight: 600,
               fontSize: 13,
@@ -2725,7 +2737,7 @@ function ProposalDocumentPage({ event, onBack }) {
               display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
             }}
           >
-            <Stamp size={26} color={COLORS.brassDeep} strokeWidth={1.5} />
+            <Stamp size={26} style={{ color: COLORS.brassDeep }} strokeWidth={1.5} />
           </div>
         </div>
       </div>
@@ -3427,7 +3439,7 @@ function StudioDashboard({ events, isAdmin, onOpen, onNewProject }) {
                 </div>
               </div>
               <StatusTag status={ev.status} />
-              <ChevronRight size={18} color={COLORS.inkFaint} />
+              <ChevronRight size={18} style={{ color: COLORS.inkFaint }} />
             </div>
           );
         })}
@@ -3820,7 +3832,7 @@ function ClientEventPicker({ events, onChoose }) {
               <div style={{ fontFamily: FONT_BODY, fontSize: 15, fontWeight: 600, color: COLORS.ink }}>{ev.name}</div>
               <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>{ev.type} · {ev.date}</div>
             </div>
-            <ChevronRight size={16} color={COLORS.inkFaint} />
+            <ChevronRight size={16} style={{ color: COLORS.inkFaint }} />
           </button>
         ))}
       </div>
@@ -3828,7 +3840,45 @@ function ClientEventPicker({ events, onChoose }) {
   );
 }
 
+// Client-side bottom nav. Deliberately a different set from the studio's
+// AppBottomNav — a client has no Team/Money/More, and their sections map
+// to what they can actually act on, so sharing one component between the
+// two would mean a props-driven mess rather than real reuse.
+function ClientBottomNav({ active, onChange, dots }) {
+  const item = (key, label, Icon) => (
+    <button
+      onClick={() => onChange(key)}
+      style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 3, background: "none", border: "none",
+        cursor: "pointer", padding: "6px 4px", color: active === key ? COLORS.brass : COLORS.inkFaint,
+        fontFamily: FONT_BODY, fontSize: 9, position: "relative",
+      }}
+    >
+      <Icon size={19} />
+      {label}
+      {dots && dots[key] && (
+        <span style={{ position: "absolute", top: 3, right: 10, width: 6, height: 6, borderRadius: "50%", background: COLORS.brass }} />
+      )}
+    </button>
+  );
+  return (
+    <div
+      style={{
+        display: "flex", justifyContent: "space-around", alignItems: "center", padding: "10px 6px 14px",
+        background: COLORS.card, borderTop: `1px solid ${COLORS.line}`, position: "sticky", bottom: 0,
+      }}
+    >
+      {item("overview", "Overview", ListChecks)}
+      {item("proposal", "Proposal", FileText)}
+      {item("approvals", "Approvals", Stamp)}
+      {item("money", "Money", Banknote)}
+      {item("messages", "Messages", MessageCircle)}
+    </div>
+  );
+}
+
 function ClientPortal({ event, onToggleTask, onApproveProposal, onDisapproveProposal, onApproveMilestone, onDisapproveMilestone, onSendMessage, onDeleteMessage, onRequestTask, previewMode = false }) {
+  const [section, setSection] = useState("overview");
   const pct = progressOf(event);
   // Anything still awaiting internal admin review should look identical to
   // "draft" from the client's point of view — they should never see, or need
@@ -3844,60 +3894,80 @@ function ClientPortal({ event, onToggleTask, onApproveProposal, onDisapproveProp
   // against a crash, not the real security boundary.
   const noop = () => {};
 
+  // Anything awaiting the client's own decision is worth surfacing on the
+  // nav itself — otherwise splitting one scrolling page into sections
+  // hides exactly the things that used to be impossible to miss.
+  const awaitingProposal = clientProposal.status === "sent";
+  const awaitingApprovals = clientApprovals.filter((a) => a.status === "pending").length;
+
   return (
-    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 20px 60px" }}>
-      {previewMode && (
-        <div
-          style={{
-            marginTop: 16, padding: "10px 14px", borderRadius: 6, background: COLORS.paperDeep,
-            border: `1px solid ${COLORS.line}`, display: "flex", alignItems: "center", gap: 8,
-            fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkSoft,
-          }}
-        >
-          <Eye size={13} /> Previewing as the client — only the client can actually approve, disapprove, message, or request a task here.
+    <div style={{ minHeight: "100vh", background: COLORS.paper, display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "0 18px 24px", maxWidth: 620, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+        {previewMode && (
+          <div
+            style={{
+              marginTop: 16, padding: "10px 14px", borderRadius: 6, background: COLORS.paperDeep,
+              border: `1px solid ${COLORS.line}`, display: "flex", alignItems: "center", gap: 8,
+              fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkSoft,
+            }}
+          >
+            <Eye size={13} /> Previewing as the client — only the client can actually approve, disapprove, message, or request a task here.
+          </div>
+        )}
+
+        <div style={{ padding: "28px 0 22px", textAlign: "center" }}>
+          <Eyebrow>{event.type} · {event.date}</Eyebrow>
+          <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: "clamp(26px, 6vw, 36px)", color: COLORS.ink, margin: "8px 0 10px" }}>
+            {event.name}
+          </h1>
+          <div style={{ display: "flex", justifyContent: "center", gap: 6, fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkSoft, alignItems: "center" }}>
+            <MapPin size={12} /> {event.venue}
+          </div>
+          <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
+            <ProgressRing pct={pct} size={80} />
+          </div>
+          <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkSoft, marginTop: 10 }}>
+            Your event is coming together
+          </div>
         </div>
-      )}
-      <div style={{ padding: "40px 0 28px", textAlign: "center" }}>
-        <Eyebrow>{event.type} · {event.date}</Eyebrow>
-        <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: "clamp(30px, 6vw, 44px)", color: COLORS.ink, margin: "8px 0 10px" }}>
-          {event.name}
-        </h1>
-        <div style={{ display: "flex", justifyContent: "center", gap: 16, fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkSoft, flexWrap: "wrap" }}>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><MapPin size={13} /> {event.venue}</span>
-        </div>
-        <div style={{ display: "flex", justifyContent: "center", marginTop: 22 }}>
-          <ProgressRing pct={pct} size={80} />
-        </div>
-        <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkSoft, marginTop: 8 }}>
-          Your event is coming together
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {section === "overview" && (
+            <SectionCard>
+              <SectionTitle>Planning timeline</SectionTitle>
+              <PhaseChecklist phases={event.phases} editable={false} />
+              {!previewMode && onRequestTask && <TaskRequestForm requests={event.taskRequests} onRequest={onRequestTask} />}
+            </SectionCard>
+          )}
+
+          {section === "proposal" && (
+            <ProposalView proposal={clientProposal} editable={false} onApprove={onApproveProposal || noop} onDisapprove={onDisapproveProposal || noop} />
+          )}
+
+          {section === "approvals" && (
+            <ApprovalsList approvals={clientApprovals} editable={false} onApprove={onApproveMilestone || noop} onDisapprove={onDisapproveMilestone || noop} />
+          )}
+
+          {section === "money" && (
+            <>
+              <VendorsView vendors={event.vendors || []} readOnly />
+              <BudgetView budget={event.budget} vendorSpendTotal={event.vendorSpendTotal} clientPayments={event.clientPayments} clientBalanceDueDate={event.clientBalanceDueDate} readOnly />
+              <ClientPaymentsView payments={event.clientPayments || []} readOnly />
+            </>
+          )}
+
+          {section === "messages" && (
+            <MessageThread
+              messages={event.messages || []}
+              onSend={onSendMessage || noop}
+              onDelete={previewMode ? undefined : onDeleteMessage}
+              viewerRole="client"
+              senderOptions={[{ value: "client", label: event.clientName, authorType: "client" }]}
+            />
+          )}
         </div>
       </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        <SectionCard>
-          <SectionTitle>Planning timeline</SectionTitle>
-          <PhaseChecklist phases={event.phases} editable={false} />
-          {!previewMode && onRequestTask && <TaskRequestForm requests={event.taskRequests} onRequest={onRequestTask} />}
-        </SectionCard>
-
-        <ProposalView proposal={clientProposal} editable={false} onApprove={onApproveProposal || noop} onDisapprove={onDisapproveProposal || noop} />
-
-        <ApprovalsList approvals={clientApprovals} editable={false} onApprove={onApproveMilestone || noop} onDisapprove={onDisapproveMilestone || noop} />
-
-        <VendorsView vendors={event.vendors || []} readOnly />
-
-        <BudgetView budget={event.budget} vendorSpendTotal={event.vendorSpendTotal} clientPayments={event.clientPayments} clientBalanceDueDate={event.clientBalanceDueDate} readOnly />
-
-        <ClientPaymentsView payments={event.clientPayments || []} readOnly />
-
-        <MessageThread
-          messages={event.messages || []}
-          onSend={onSendMessage || noop}
-          onDelete={previewMode ? undefined : onDeleteMessage}
-          viewerRole="client"
-          senderOptions={[{ value: "client", label: event.clientName, authorType: "client" }]}
-        />
-      </div>
+      <ClientBottomNav active={section} onChange={setSection} dots={{ proposal: awaitingProposal, approvals: awaitingApprovals > 0 }} />
     </div>
   );
 }
@@ -4161,8 +4231,16 @@ function HCaptchaWidget({ onToken, resetKey }) {
 
     function renderWidget() {
       if (cancelled || !containerRef.current || !window.hcaptcha || widgetIdRef.current !== null) return;
+      // The standard widget can be wider than a phone's auth card has room
+      // for; hCaptcha's own "compact" size never overflows, so use it
+      // whenever the card is narrow (threshold errs generously toward
+      // compact — a slightly smaller widget beats a clipped one). Dark
+      // theme because every screen this appears on is dark.
+      const narrow = containerRef.current.clientWidth < 340;
       widgetIdRef.current = window.hcaptcha.render(containerRef.current, {
         sitekey: HCAPTCHA_SITE_KEY,
+        size: narrow ? "compact" : "normal",
+        theme: "dark",
         callback: (token) => onToken(token),
         "expired-callback": () => onToken(""),
         "error-callback": () => onToken(""),
@@ -4206,18 +4284,49 @@ function HCaptchaWidget({ onToken, resetKey }) {
 
 function AuthShell({ children }) {
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, background: "#141414" }}>
+      <style>{FONT_IMPORT}</style>
       <div style={{ width: "100%", maxWidth: 400 }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
           <img
-            src="/brand/bit-wordmark.jpg"
+            src="/brand/bit-wordmark-transparent.png"
             alt="BiT — Big Things"
-            style={{ width: 168, borderRadius: 12, boxShadow: "0 6px 20px rgba(27,46,40,0.18)" }}
+            style={{ width: 130, filter: "drop-shadow(0 0 20px rgba(217,30,75,0.3))" }}
           />
         </div>
         {children}
       </div>
     </div>
+  );
+}
+
+// Dark counterparts to SectionCard/SectionTitle/Eyebrow — those three stay
+// exactly as they are everywhere else in the app (still light-themed);
+// these exist so the auth screens (which now render inside AuthShell's
+// dark background) get their own matching dark card rather than a white
+// SectionCard awkwardly floating on black.
+function DarkAuthCard({ children }) {
+  return (
+    <div style={{ background: "linear-gradient(180deg, #1E1E1E, #191216)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 24 }}>
+      {children}
+    </div>
+  );
+}
+function DarkAuthTitle({ children }) {
+  return <h2 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 22, color: "white", margin: "0 0 16px" }}>{children}</h2>;
+}
+function DarkAuthEyebrow({ children }) {
+  return <div style={{ fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: COLORS.brass, marginBottom: 6 }}>{children}</div>;
+}
+const darkAuthInputStyle = {
+  width: "100%", fontFamily: FONT_BODY, fontSize: 14, padding: "11px 14px",
+  border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, background: "rgba(255,255,255,0.04)", color: "white", outline: "none",
+};
+function DarkAuthBack({ onClick }) {
+  return (
+    <button onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 18 }}>
+      <ChevronLeft size={15} /> Back
+    </button>
   );
 }
 
@@ -4234,11 +4343,7 @@ function SetNewPasswordForm({ onComplete }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const inputStyle = {
-    width: "100%", fontFamily: FONT_BODY, fontSize: 14, padding: "11px 14px",
-    border: `1px solid ${COLORS.line}`, borderRadius: 4, background: COLORS.paper,
-    color: COLORS.ink, outline: "none",
-  };
+  const inputStyle = darkAuthInputStyle;
 
   const submit = async () => {
     if (password.length < 8) {
@@ -4263,13 +4368,13 @@ function SetNewPasswordForm({ onComplete }) {
 
   return (
     <AuthShell>
-      <SectionCard>
-        <SectionTitle>Set your password</SectionTitle>
-        <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkSoft, marginBottom: 14, lineHeight: 1.5 }}>
+      <DarkAuthCard>
+        <DarkAuthTitle>Set your password</DarkAuthTitle>
+        <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: "rgba(255,255,255,0.6)", marginBottom: 14, lineHeight: 1.5 }}>
           Choose a password for your Studio account.
         </div>
         <div style={{ marginBottom: 14 }}>
-          <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brassDeep, marginBottom: 6 }}>
+          <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brass, marginBottom: 6 }}>
             New password
           </label>
           <div style={{ position: "relative" }}>
@@ -4287,7 +4392,7 @@ function SetNewPasswordForm({ onComplete }) {
               title={showPassword ? "Hide password" : "Show password"}
               style={{
                 position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
-                background: "none", border: "none", color: COLORS.inkFaint, cursor: "pointer",
+                background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer",
                 display: "flex", alignItems: "center", padding: 4,
               }}
             >
@@ -4296,7 +4401,7 @@ function SetNewPasswordForm({ onComplete }) {
           </div>
         </div>
         <div style={{ marginBottom: 18 }}>
-          <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brassDeep, marginBottom: 6 }}>
+          <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brass, marginBottom: 6 }}>
             Confirm password
           </label>
           <input
@@ -4308,19 +4413,19 @@ function SetNewPasswordForm({ onComplete }) {
             onKeyDown={(e) => e.key === "Enter" && submit()}
           />
         </div>
-        {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.clayDeep, marginBottom: 14 }}>{error}</div>}
+        {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: "#FF8FA3", marginBottom: 14 }}>{error}</div>}
         <button
           onClick={submit}
           disabled={submitting}
           style={{
-            width: "100%", padding: "12px 18px", borderRadius: 4, border: "none",
-            background: COLORS.ink, color: COLORS.paper, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14,
+            width: "100%", padding: "12px 18px", borderRadius: 6, border: "none",
+            background: COLORS.brass, color: "white", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14,
             cursor: submitting ? "default" : "pointer", opacity: submitting ? 0.7 : 1,
           }}
         >
           {submitting ? "Saving…" : "Save password and continue"}
         </button>
-      </SectionCard>
+      </DarkAuthCard>
     </AuthShell>
   );
 }
@@ -4427,6 +4532,244 @@ function BoldWelcomeScreen({ onChoosePlanner, onChooseClient, onChooseCode }) {
   );
 }
 
+// Shared bottom nav for the new app-style screens (0034-era design work —
+// see the mockup conversation this came out of). Money only shows for
+// admins, matching the old TopNav's Finance button gating exactly —
+// nothing about who can see agency-wide totals changed, just where the
+// button lives.
+function AppBottomNav({ active, isAdmin, onDashboard, onCalendar, onFinance, onMore }) {
+  const item = (key, label, Icon, onClick) => (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 3, background: "none", border: "none",
+        cursor: "pointer", padding: "6px 4px", color: active === key ? COLORS.brass : "rgba(255,255,255,0.4)",
+        fontFamily: FONT_BODY, fontSize: 9,
+      }}
+    >
+      <Icon size={19} />
+      {label}
+    </button>
+  );
+  return (
+    <div
+      style={{
+        display: "flex", justifyContent: "space-around", alignItems: "center", padding: "10px 6px 14px",
+        background: "rgba(20,20,20,0.97)", borderTop: "1px solid rgba(255,255,255,0.08)",
+        position: "sticky", bottom: 0,
+      }}
+    >
+      {item("dashboard", "Dashboard", Building2, onDashboard)}
+      {item("calendar", "Calendar", Calendar, onCalendar)}
+      {isAdmin && item("finance", "Money", Banknote, onFinance)}
+      {item("more", "More", MoreHorizontalIcon, onMore)}
+    </div>
+  );
+}
+
+// Lucide's actual "MoreHorizontal" isn't imported elsewhere in this app —
+// a plain three-dot SVG avoids adding an import used in exactly one place.
+function MoreHorizontalIcon({ size }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />
+    </svg>
+  );
+}
+
+// The new app-style home screen. Only the four dashboard stats are safe
+// to compute from budget.total and clientPayments — deliberately never
+// touches vendors[].cost/deposit here, since those come back masked
+// (null) for team members (0033_finance_view_restore.sql) and this
+// screen is the first thing every planner sees, not just admins.
+function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalendar, onOpenFinance, onOpenMore }) {
+  const totalBudget = events.reduce((s, e) => s + (e.budget?.total || 0), 0);
+  const totalReceived = events.reduce((s, e) => s + (e.clientPayments || []).reduce((s2, p) => s2 + p.amount, 0), 0);
+  const totalOutstanding = Math.max(0, totalBudget - totalReceived);
+  const pct = totalBudget > 0 ? Math.min(100, Math.round((totalReceived / totalBudget) * 100)) : 0;
+  const upcoming = [...events]
+    .filter((e) => e.date)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(0, 3);
+
+  const statCard = (Icon, label, value) => (
+    <div style={{ background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 14 }}>
+      <div style={{ width: 26, height: 26, borderRadius: 8, background: "rgba(217,30,75,0.15)", display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.brass, marginBottom: 8 }}>
+        <Icon size={14} />
+      </div>
+      <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{label}</div>
+      <div style={{ fontFamily: FONT_MONO, fontSize: 17, fontWeight: 600, color: "white", marginTop: 2 }}>{value}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#141414", display: "flex", flexDirection: "column" }}>
+      <style>{FONT_IMPORT}</style>
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px 18px 24px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+            Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}
+          </div>
+        </div>
+        <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 21, color: "white", margin: "0 0 16px" }}>
+          Current productions
+        </h1>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+          {statCard(Building2, "Active events", events.length)}
+          {statCard(Wallet, "Total budget", currency(totalBudget))}
+          {statCard(Banknote, "Received", currency(totalReceived))}
+          {statCard(Clock, "Outstanding", currency(totalOutstanding))}
+        </div>
+
+        {upcoming.length > 0 && (
+          <>
+            <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700, color: "white", marginBottom: 10 }}>Upcoming events</div>
+            {upcoming.map((ev) => (
+              <div
+                key={ev.id}
+                onClick={() => onOpen(ev.id)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 12, background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)",
+                  borderRadius: 12, padding: "12px 14px", marginBottom: 8, cursor: "pointer",
+                }}
+              >
+                <div style={{ width: 42, textAlign: "center", flexShrink: 0 }}>
+                  <div style={{ fontFamily: FONT_BODY, fontSize: 9, color: COLORS.brass, fontWeight: 700, textTransform: "uppercase" }}>
+                    {ev.date ? new Date(ev.date + "T00:00:00").toLocaleDateString("en-US", { month: "short" }) : "—"}
+                  </div>
+                  <div style={{ fontFamily: FONT_MONO, fontSize: 17, color: "white", fontWeight: 600 }}>
+                    {ev.date ? new Date(ev.date + "T00:00:00").getDate() : "—"}
+                  </div>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.name}</div>
+                  <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{ev.venue}</div>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+
+        <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700, color: "white", margin: "18px 0 10px" }}>Money overview</div>
+        <div style={{ background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 16, marginBottom: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div style={{ width: 84, height: 84, borderRadius: "50%", background: `conic-gradient(${COLORS.brass} 0% ${pct}%, rgba(255,255,255,0.08) ${pct}% 100%)`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <div style={{ width: 60, height: 60, borderRadius: "50%", background: "#1E1E1E", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT_MONO, fontSize: 13, color: "white", fontWeight: 600 }}>
+                {pct}%
+              </div>
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontFamily: FONT_BODY, fontSize: 11, padding: "4px 0", color: "rgba(255,255,255,0.6)" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 7, height: 7, borderRadius: 2, background: COLORS.brass }} /> Received</span>
+                <span style={{ color: "white" }}>{currency(totalReceived)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontFamily: FONT_BODY, fontSize: 11, padding: "4px 0", color: "rgba(255,255,255,0.6)" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 7, height: 7, borderRadius: 2, background: "rgba(255,255,255,0.08)" }} /> Outstanding</span>
+                <span style={{ color: "white" }}>{currency(totalOutstanding)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {events.length === 0 && (
+          <div style={{ textAlign: "center", padding: "24px 0", fontFamily: FONT_BODY, color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
+            No productions yet. Create your first project to get started.
+          </div>
+        )}
+
+        <button
+          onClick={onNewProject}
+          style={{
+            width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: COLORS.brass,
+            color: "white", border: "none", borderRadius: 12, padding: 14, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
+            cursor: "pointer", boxShadow: "0 8px 20px rgba(217,30,75,0.3)", marginBottom: 12,
+          }}
+        >
+          <Plus size={16} /> New project
+        </button>
+      </div>
+      <AppBottomNav active="dashboard" isAdmin={isAdmin} onDashboard={() => {}} onCalendar={onOpenCalendar} onFinance={onOpenFinance} onMore={onOpenMore} />
+    </div>
+  );
+}
+
+// "More" — Team and the Approvals queue for admins, Sign out for anyone.
+// Reached from the new bottom nav; tapping through still lands on the
+// existing (light-themed) TeamManagement/AdminQueue screens for now —
+// see the early-return block above for why those weren't rebuilt yet.
+function AppStyleMoreMenu({ isAdmin, pendingCount, onBack, onOpenTeam, onOpenQueue, onSignOut }) {
+  const row = (Icon, label, onClick, badge, danger) => (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex", alignItems: "center", gap: 12, width: "100%", background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: 12, padding: "13px 14px", marginBottom: 8, cursor: "pointer", textAlign: "left",
+      }}
+    >
+      <div style={{ width: 32, height: 32, borderRadius: 9, background: danger ? "rgba(255,255,255,0.06)" : "rgba(217,30,75,0.15)", color: danger ? "rgba(255,255,255,0.4)" : COLORS.brass, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <Icon size={15} />
+      </div>
+      <div style={{ flex: 1, fontFamily: FONT_BODY, fontSize: 13, fontWeight: danger ? 500 : 600, color: danger ? "rgba(255,255,255,0.7)" : "white" }}>{label}</div>
+      {badge > 0 && (
+        <span style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "rgba(217,30,75,0.15)", color: COLORS.brass }}>{badge}</span>
+      )}
+      {!danger && <ChevronRight size={16} color="rgba(255,255,255,0.4)" />}
+    </button>
+  );
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#141414", display: "flex", flexDirection: "column" }}>
+      <style>{FONT_IMPORT}</style>
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px 18px 8px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          <button onClick={onBack} style={{ width: 30, height: 30, borderRadius: "50%", background: "#1E1E1E", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <ChevronLeft size={16} color="white" />
+          </button>
+          <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 20, color: "white", margin: 0 }}>More</h1>
+        </div>
+
+        {isAdmin && (
+          <>
+            <div style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: "rgba(255,255,255,0.4)", margin: "18px 0 8px" }}>Manage</div>
+            {row(Users, "Team", onOpenTeam)}
+            {row(CheckCircle2, "Approvals queue", onOpenQueue, pendingCount)}
+          </>
+        )}
+
+        <div style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: "rgba(255,255,255,0.4)", margin: "18px 0 8px" }}>Account</div>
+        {row(LogOut, "Sign out", onSignOut, 0, true)}
+      </div>
+      <AppBottomNav active="more" isAdmin={isAdmin} onDashboard={onBack} onCalendar={onBack} onFinance={onBack} onMore={() => {}} />
+    </div>
+  );
+}
+
+// Calendar tab is a placeholder for now — a real "every event across the
+// org, tap a day to filter" calendar is a genuinely new feature (nothing
+// like it exists yet), not something to fake as functional. Honest empty
+// state beats a dead-end button that pretends to work.
+function AppStyleComingSoon({ onBack }) {
+  return (
+    <div style={{ minHeight: "100vh", background: "#141414", display: "flex", flexDirection: "column" }}>
+      <style>{FONT_IMPORT}</style>
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px 18px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          <button onClick={onBack} style={{ width: 30, height: 30, borderRadius: "50%", background: "#1E1E1E", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <ChevronLeft size={16} color="white" />
+          </button>
+          <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 20, color: "white", margin: 0 }}>Calendar</h1>
+        </div>
+        <div style={{ textAlign: "center", padding: "60px 20px", fontFamily: FONT_BODY, color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
+          <Calendar size={28} color="rgba(255,255,255,0.2)" style={{ marginBottom: 12 }} />
+          <div>A full calendar view is coming soon.</div>
+        </div>
+      </div>
+      <AppBottomNav active="calendar" isAdmin={false} onDashboard={onBack} onCalendar={() => {}} onFinance={onBack} onMore={onBack} />
+    </div>
+  );
+}
+
 function CodeLogin({ onSuccess, onBack }) {
   const [code, setCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -4458,15 +4801,13 @@ function CodeLogin({ onSuccess, onBack }) {
 
   return (
     <div>
-      <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: COLORS.inkSoft, fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 18 }}>
-        <ChevronLeft size={15} /> Back
-      </button>
-      <SectionCard>
-        <Eyebrow>Client access</Eyebrow>
-        <h2 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 20, color: COLORS.ink, margin: "6px 0 6px" }}>
+      <DarkAuthBack onClick={onBack} />
+      <DarkAuthCard>
+        <DarkAuthEyebrow>Client access</DarkAuthEyebrow>
+        <h2 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 20, color: "white", margin: "6px 0 6px" }}>
           Enter your access code
         </h2>
-        <p style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkSoft, margin: "0 0 18px" }}>
+        <p style={{ fontFamily: FONT_BODY, fontSize: 13, color: "rgba(255,255,255,0.55)", margin: "0 0 18px" }}>
           Your planner will have given you an 8-character code — no email required.
         </p>
         <div style={{ marginBottom: 14 }}>
@@ -4478,24 +4819,24 @@ function CodeLogin({ onSuccess, onBack }) {
             maxLength={8}
             style={{
               width: "100%", fontFamily: FONT_MONO, fontSize: 20, fontWeight: 700, letterSpacing: 3, textAlign: "center",
-              padding: "14px", border: `1px solid ${COLORS.line}`, borderRadius: 4, background: COLORS.paper, color: COLORS.ink, outline: "none",
+              padding: "14px", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, background: "rgba(255,255,255,0.04)", color: "white", outline: "none",
             }}
           />
         </div>
-        {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.clayDeep, marginBottom: 14 }}>{error}</div>}
+        {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: "#FF8FA3", marginBottom: 14 }}>{error}</div>}
         <HCaptchaWidget onToken={setCaptchaToken} resetKey={captchaResetKey} />
         <button
           onClick={submit}
           disabled={submitting}
           style={{
-            width: "100%", padding: "12px 18px", borderRadius: 4, border: "none",
-            background: COLORS.brass, color: COLORS.card, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14,
+            width: "100%", padding: "12px 18px", borderRadius: 6, border: "none",
+            background: COLORS.brass, color: "white", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14,
             cursor: submitting ? "default" : "pointer", opacity: submitting ? 0.7 : 1,
           }}
         >
           {submitting ? "Checking…" : "Continue"}
         </button>
-      </SectionCard>
+      </DarkAuthCard>
     </div>
   );
 }
@@ -4515,11 +4856,7 @@ function PlannerLoginForm({ onSubmit, onBack }) {
   const [resetCaptchaToken, setResetCaptchaToken] = useState("");
   const [resetCaptchaResetKey, setResetCaptchaResetKey] = useState(0);
 
-  const inputStyle = {
-    width: "100%", fontFamily: FONT_BODY, fontSize: 14, padding: "11px 14px",
-    border: `1px solid ${COLORS.line}`, borderRadius: 4, background: COLORS.paper,
-    color: COLORS.ink, outline: "none",
-  };
+  const inputStyle = darkAuthInputStyle;
 
   const submit = async () => {
     if (!email.trim() || !password.trim()) {
@@ -4567,25 +4904,20 @@ function PlannerLoginForm({ onSubmit, onBack }) {
   if (mode === "forgot" || mode === "forgot-sent") {
     return (
       <div>
-        <button
-          onClick={() => setMode("signin")}
-          style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: COLORS.inkSoft, fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 18 }}
-        >
-          <ChevronLeft size={15} /> Back to sign in
-        </button>
-        <SectionCard>
-          <SectionTitle>Reset your password</SectionTitle>
+        <DarkAuthBack onClick={() => setMode("signin")} />
+        <DarkAuthCard>
+          <DarkAuthTitle>Reset your password</DarkAuthTitle>
           {mode === "forgot-sent" ? (
-            <div style={{ fontFamily: FONT_BODY, fontSize: 14, color: COLORS.inkSoft, lineHeight: 1.6 }}>
-              If <strong style={{ color: COLORS.ink }}>{resetEmail}</strong> has a Studio account, a reset link is on its way — check that inbox (and spam folder) and follow the link to set a new password.
+            <div style={{ fontFamily: FONT_BODY, fontSize: 14, color: "rgba(255,255,255,0.6)", lineHeight: 1.6 }}>
+              If <strong style={{ color: "white" }}>{resetEmail}</strong> has a Studio account, a reset link is on its way — check that inbox (and spam folder) and follow the link to set a new password.
             </div>
           ) : (
             <>
-              <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkSoft, marginBottom: 14, lineHeight: 1.5 }}>
+              <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: "rgba(255,255,255,0.6)", marginBottom: 14, lineHeight: 1.5 }}>
                 Enter your email and we'll send a link to set a new password.
               </div>
               <div style={{ marginBottom: 14 }}>
-                <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brassDeep, marginBottom: 6 }}>Email</label>
+                <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brass, marginBottom: 6 }}>Email</label>
                 <input
                   style={inputStyle}
                   value={resetEmail}
@@ -4594,14 +4926,14 @@ function PlannerLoginForm({ onSubmit, onBack }) {
                   onKeyDown={(e) => e.key === "Enter" && sendResetLink()}
                 />
               </div>
-              {resetError && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.clayDeep, marginBottom: 14 }}>{resetError}</div>}
+              {resetError && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: "#FF8FA3", marginBottom: 14 }}>{resetError}</div>}
               <HCaptchaWidget onToken={setResetCaptchaToken} resetKey={resetCaptchaResetKey} />
               <button
                 onClick={sendResetLink}
                 disabled={resetSending}
                 style={{
-                  width: "100%", padding: "12px 18px", borderRadius: 4, border: "none",
-                  background: COLORS.ink, color: COLORS.paper, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14,
+                  width: "100%", padding: "12px 18px", borderRadius: 6, border: "none",
+                  background: COLORS.brass, color: "white", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14,
                   cursor: resetSending ? "default" : "pointer", opacity: resetSending ? 0.7 : 1,
                 }}
               >
@@ -4609,24 +4941,22 @@ function PlannerLoginForm({ onSubmit, onBack }) {
               </button>
             </>
           )}
-        </SectionCard>
+        </DarkAuthCard>
       </div>
     );
   }
 
   return (
     <div>
-      <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: COLORS.inkSoft, fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 18 }}>
-        <ChevronLeft size={15} /> Back
-      </button>
-      <SectionCard>
-        <SectionTitle>Studio sign in</SectionTitle>
+      <DarkAuthBack onClick={onBack} />
+      <DarkAuthCard>
+        <DarkAuthTitle>Studio sign in</DarkAuthTitle>
         <div style={{ marginBottom: 14 }}>
-          <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brassDeep, marginBottom: 6 }}>Email</label>
+          <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brass, marginBottom: 6 }}>Email</label>
           <input style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@agency.com" onKeyDown={(e) => e.key === "Enter" && submit()} />
         </div>
         <div style={{ marginBottom: 8 }}>
-          <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brassDeep, marginBottom: 6 }}>Password</label>
+          <label style={{ display: "block", fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: COLORS.brass, marginBottom: 6 }}>Password</label>
           <div style={{ position: "relative" }}>
             <input
               type={showPassword ? "text" : "password"}
@@ -4642,7 +4972,7 @@ function PlannerLoginForm({ onSubmit, onBack }) {
               title={showPassword ? "Hide password" : "Show password"}
               style={{
                 position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
-                background: "none", border: "none", color: COLORS.inkFaint, cursor: "pointer",
+                background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer",
                 display: "flex", alignItems: "center", padding: 4,
               }}
             >
@@ -4653,28 +4983,28 @@ function PlannerLoginForm({ onSubmit, onBack }) {
         <div style={{ textAlign: "right", marginBottom: 18 }}>
           <button
             onClick={() => { setMode("forgot"); setResetEmail(email); setResetError(""); }}
-            style={{ background: "none", border: "none", color: COLORS.inkSoft, fontFamily: FONT_BODY, fontSize: 12, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
+            style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontFamily: FONT_BODY, fontSize: 12, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
           >
             Forgot password?
           </button>
         </div>
-        {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.clayDeep, marginBottom: 14 }}>{error}</div>}
+        {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: "#FF8FA3", marginBottom: 14 }}>{error}</div>}
         <HCaptchaWidget onToken={setCaptchaToken} resetKey={captchaResetKey} />
         <button
           onClick={submit}
           disabled={loading}
           style={{
-            width: "100%", padding: "12px 18px", borderRadius: 4, border: "none",
-            background: COLORS.ink, color: COLORS.paper, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14,
+            width: "100%", padding: "12px 18px", borderRadius: 6, border: "none",
+            background: COLORS.brass, color: "white", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14,
             cursor: loading ? "default" : "pointer", opacity: loading ? 0.7 : 1,
           }}
         >
           {loading ? "Signing in…" : "Sign in"}
         </button>
-        <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: COLORS.inkFaint, marginTop: 12, textAlign: "center" }}>
+        <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 12, textAlign: "center" }}>
           Signing in against your connected Supabase project.
         </div>
-      </SectionCard>
+      </DarkAuthCard>
     </div>
   );
 }
@@ -4687,10 +5017,7 @@ function ClientInviteLanding({ onBack }) {
   const [captchaToken, setCaptchaToken] = useState("");
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
 
-  const fieldStyle = {
-    width: "100%", fontFamily: FONT_BODY, fontSize: 14, padding: "11px 14px",
-    border: `1px solid ${COLORS.line}`, borderRadius: 4, background: COLORS.paper, color: COLORS.ink, outline: "none",
-  };
+  const fieldStyle = darkAuthInputStyle;
 
   const sendLink = async () => {
     if (!isPlausibleEmail(email)) {
@@ -4716,21 +5043,19 @@ function ClientInviteLanding({ onBack }) {
 
   return (
     <div>
-      <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: COLORS.inkSoft, fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 18 }}>
-        <ChevronLeft size={15} /> Back
-      </button>
-      <SectionCard>
-        <Eyebrow>Client access</Eyebrow>
-        <h2 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 20, color: COLORS.ink, margin: "6px 0 6px" }}>
+      <DarkAuthBack onClick={onBack} />
+      <DarkAuthCard>
+        <DarkAuthEyebrow>Client access</DarkAuthEyebrow>
+        <h2 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 20, color: "white", margin: "6px 0 6px" }}>
           {sent ? "Check your email" : "Get your access link"}
         </h2>
         {sent ? (
-          <p style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkSoft, margin: 0 }}>
-            If <strong style={{ color: COLORS.ink }}>{email}</strong> has been invited to an event, a sign-in link is on its way. Open it on this device to continue — this tab will pick it up automatically.
+          <p style={{ fontFamily: FONT_BODY, fontSize: 13, color: "rgba(255,255,255,0.55)", margin: 0 }}>
+            If <strong style={{ color: "white" }}>{email}</strong> has been invited to an event, a sign-in link is on its way. Open it on this device to continue — this tab will pick it up automatically.
           </p>
         ) : (
           <>
-            <p style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkSoft, margin: "0 0 18px" }}>
+            <p style={{ fontFamily: FONT_BODY, fontSize: 13, color: "rgba(255,255,255,0.55)", margin: "0 0 18px" }}>
               Enter the email address your planner used to invite you. We'll send a one-time sign-in link — no password needed.
             </p>
             <div style={{ marginBottom: 14 }}>
@@ -4742,14 +5067,14 @@ function ClientInviteLanding({ onBack }) {
                 onKeyDown={(e) => e.key === "Enter" && sendLink()}
               />
             </div>
-            {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.clayDeep, marginBottom: 14 }}>{error}</div>}
+            {error && <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: "#FF8FA3", marginBottom: 14 }}>{error}</div>}
             <HCaptchaWidget onToken={setCaptchaToken} resetKey={captchaResetKey} />
             <button
               onClick={sendLink}
               disabled={sending}
               style={{
-                width: "100%", padding: "12px 18px", borderRadius: 4, border: "none",
-                background: COLORS.brass, color: COLORS.ink, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14,
+                width: "100%", padding: "12px 18px", borderRadius: 6, border: "none",
+                background: COLORS.brass, color: "white", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14,
                 cursor: sending ? "default" : "pointer", opacity: sending ? 0.7 : 1,
               }}
             >
@@ -4757,7 +5082,7 @@ function ClientInviteLanding({ onBack }) {
             </button>
           </>
         )}
-      </SectionCard>
+      </DarkAuthCard>
     </div>
   );
 }
@@ -4769,7 +5094,7 @@ function TopNav({ role, inEvent, onBackToDashboard, onSignOut, isAdmin, isPrevie
     <div
       style={{
         position: "sticky", top: 0, zIndex: 10,
-        background: "rgba(239,237,228,0.92)", backdropFilter: "blur(8px)",
+        background: COLORS.navBg, backdropFilter: "blur(8px)",
         borderBottom: `1px solid ${COLORS.line}`,
       }}
     >
@@ -4935,7 +5260,7 @@ function PushNotificationBanner({ onEnable, onDismiss }) {
         boxShadow: "0 4px 16px rgba(0,0,0,0.18)", fontFamily: FONT_BODY, fontSize: 13,
       }}
     >
-      <Bell size={16} color={COLORS.brass} style={{ flexShrink: 0, marginTop: 1 }} />
+      <Bell size={16} style={{ color: COLORS.brass, flexShrink: 0, marginTop: 1 }} />
       <div style={{ flex: 1 }}>
         <div style={{ fontWeight: 600, color: COLORS.ink, marginBottom: 3 }}>Turn on notifications?</div>
         <div style={{ color: COLORS.inkSoft, fontSize: 12, marginBottom: 8 }}>
@@ -4987,6 +5312,8 @@ export default function BitAffairs() {
   const [viewingQueue, setViewingQueue] = useState(false);
   const [viewingTeam, setViewingTeam] = useState(false);
   const [viewingFinance, setViewingFinance] = useState(false);
+  const [viewingMore, setViewingMore] = useState(false);
+  const [viewingCalendar, setViewingCalendar] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [pushPermission, setPushPermission] = useState(pushSupported ? Notification.permission : "unsupported");
   const [pushSubscribed, setPushSubscribed] = useState(() => {
@@ -5861,8 +6188,64 @@ export default function BitAffairs() {
     }
   };
 
+  // The new app-style home screen — dark, card-based, its own bottom nav
+  // — replaces the classic light TopNav+StudioDashboard pairing only for
+  // the plain "nothing else open" studio view, same early-return shape as
+  // BoldWelcomeScreen above. Every deeper screen (an open event, Team,
+  // Finance, the Approvals queue) still uses the existing light UI for
+  // now — this is deliberately just the first piece, not a full rebuild.
+  // Money/More/Calendar route into that existing UI via the same
+  // viewingTeam/viewingFinance/viewingQueue state it already used, so
+  // nothing about those screens needed to change to gain a new front door.
+  if (
+    session && role === "studio" && !openEventId && !creatingProject &&
+    !viewingTeam && !viewingFinance && !viewingQueue && !viewingMore && !viewingCalendar
+  ) {
+    return (
+      <AppStyleDashboard
+        events={events}
+        isAdmin={isAdmin}
+        onOpen={setOpenEventId}
+        onNewProject={() => setCreatingProject(true)}
+        onOpenCalendar={() => setViewingCalendar(true)}
+        onOpenFinance={() => setViewingFinance(true)}
+        onOpenMore={() => setViewingMore(true)}
+      />
+    );
+  }
+  if (session && role === "studio" && viewingMore) {
+    return (
+      <AppStyleMoreMenu
+        isAdmin={isAdmin}
+        pendingCount={pendingCount}
+        onBack={() => setViewingMore(false)}
+        onOpenTeam={() => { setViewingMore(false); setViewingTeam(true); }}
+        onOpenQueue={() => { setViewingMore(false); setViewingQueue(true); }}
+        onSignOut={async () => {
+          try {
+            await sbSignOut();
+          } catch (err) {
+            console.error("Failed to sign out", err);
+          }
+          setSession(null);
+          setGateStep("welcome");
+          setOpenEventId(null);
+          setViewingQueue(false);
+          setViewingTeam(false);
+          setViewingFinance(false);
+          setViewingMore(false);
+          setEvents([]);
+          setRole("studio");
+        }}
+      />
+    );
+  }
+  if (session && role === "studio" && viewingCalendar) {
+    return <AppStyleComingSoon onBack={() => setViewingCalendar(false)} />;
+  }
+
   return (
-    <div style={{ minHeight: "100vh", background: COLORS.paper, color: COLORS.ink }}>
+    <div data-theme={role === "client" ? "dark" : undefined} style={{ minHeight: "100vh", background: COLORS.paper, color: COLORS.ink }}>
       <style>{`
         ${FONT_IMPORT}
         * { box-sizing: border-box; }
@@ -5884,6 +6267,8 @@ export default function BitAffairs() {
           setViewingQueue(false);
           setViewingTeam(false);
           setViewingFinance(false);
+          setViewingMore(false);
+          setViewingCalendar(false);
           setRole("studio");
         }}
         onSignOut={async () => {
@@ -5898,6 +6283,8 @@ export default function BitAffairs() {
           setViewingQueue(false);
           setViewingTeam(false);
           setViewingFinance(false);
+          setViewingMore(false);
+          setViewingCalendar(false);
           setEvents([]);
           setRole("studio");
         }}
@@ -5908,18 +6295,24 @@ export default function BitAffairs() {
           setOpenEventId(null);
           setViewingTeam(false);
           setViewingFinance(false);
+          setViewingMore(false);
+          setViewingCalendar(false);
           setViewingQueue(true);
         }}
         onOpenTeam={() => {
           setOpenEventId(null);
           setViewingQueue(false);
           setViewingFinance(false);
+          setViewingMore(false);
+          setViewingCalendar(false);
           setViewingTeam(true);
         }}
         onOpenFinance={() => {
           setOpenEventId(null);
           setViewingQueue(false);
           setViewingTeam(false);
+          setViewingMore(false);
+          setViewingCalendar(false);
           setViewingFinance(true);
         }}
         pushSupported={pushSupported && Boolean(VAPID_PUBLIC_KEY) && !needsClientEventChoice}
@@ -5945,6 +6338,8 @@ export default function BitAffairs() {
               setViewingQueue(false);
               setViewingTeam(false);
               setViewingFinance(false);
+              setViewingMore(false);
+              setViewingCalendar(false);
               setEvents([]);
               setRole("studio");
             }}
