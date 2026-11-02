@@ -556,6 +556,15 @@ export async function updateEventBalanceDueDate(eventId, dueDate) {
   if (error) throw error;
 }
 
+// Manual event status — used for "Completed" / reopening. events.status is
+// free text with no check constraint, and nothing else writes it after
+// creation (every status UPDATE in the database targets proposals, not
+// events), so a manual value sticks and needs no migration.
+export async function setEventStatus(eventId, status) {
+  const { error } = await requireSupabase().from("events").update({ status }).eq("id", eventId);
+  if (error) throw error;
+}
+
 // Day-of run sheet (0027_run_sheet.sql) — planner-only, never exposed to
 // clients. position controls display order; new items append to the end
 // (caller passes items.length as position), and moveRunSheetItem swaps

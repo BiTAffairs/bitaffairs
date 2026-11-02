@@ -26,6 +26,7 @@ import {
   updateVendorCost as sbUpdateVendorCost, updateVendorDeposit as sbUpdateVendorDeposit,
   updateVendorDetails as sbUpdateVendorDetails, deleteVendor as sbDeleteVendor,
   updateVendorBalanceDueDate as sbUpdateVendorBalanceDueDate, updateEventBalanceDueDate as sbUpdateEventBalanceDueDate,
+  setEventStatus as sbSetEventStatus,
   addRunSheetItem as sbAddRunSheetItem, updateRunSheetItem as sbUpdateRunSheetItem,
   deleteRunSheetItem as sbDeleteRunSheetItem, setRunSheetItemPosition as sbSetRunSheetItemPosition,
   addReminder as sbAddReminder, updateReminder as sbUpdateReminder, deleteReminder as sbDeleteReminder,
@@ -92,6 +93,52 @@ function currency(n) {
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
+
+// events.event_date is a free-text column (0001_init.sql: `event_date text`)
+// and the New project form saves whatever was typed — "Nov 14, 2026",
+// "14th of November 2026", "TBD" (the default), "03/04/2026" — so nothing
+// here may assume a format. Returns a local Date, or null when the text
+// can't be read with confidence. It returns null rather than guessing: an
+// ambiguous "03/04/2026" is 3 April or 4 March, and a wrong date on a
+// dashboard is worse than a dash. Written-out dates must carry a four-digit
+// year, since engines will invent one if left to Date.parse ("Nov 14" has
+// parsed as 2001).
+const MONTH_WORDS = {
+  jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3, may: 4, jun: 5, june: 5,
+  jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
+};
+function parseEventDate(raw) {
+  if (typeof raw !== "string") return null;
+  const s = raw.trim().replace(/(\d)(st|nd|rd|th)\b/gi, "$1").replace(/\bof\b/gi, " ").replace(/\s+/g, " ");
+  if (!s || /^tbd$/i.test(s)) return null;
+  const make = (y, m, d) => {
+    const dt = new Date(y, m, d);
+    return dt.getFullYear() === y && dt.getMonth() === m && dt.getDate() === d ? dt : null;
+  };
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return make(+m[1], +m[2] - 1, +m[3]);
+  m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2}|\d{4})$/);
+  if (m) {
+    const a = +m[1], b = +m[2];
+    let y = +m[3];
+    if (y < 100) y += 2000;
+    if (a > 12 && b <= 12) return make(y, b - 1, a); // 14/11/2026 can only be day-first
+    if (b > 12 && a <= 12) return make(y, a - 1, b); // 11/14/2026 can only be month-first
+    if (a === b) return make(y, a - 1, b);           // 05/05/2026 reads the same either way
+    return null;                                     // 03/04/2026 is genuinely ambiguous
+  }
+  const monthOf = (w) => MONTH_WORDS[w.toLowerCase()];
+  m = s.match(/^(?:[A-Za-z]+,?\s+)?(\d{1,2})\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})$/); // "14 Nov 2026", "Sat, 14 November 2026"
+  if (m && monthOf(m[2]) !== undefined) return make(+m[3], monthOf(m[2]), +m[1]);
+  m = s.match(/^(?:[A-Za-z]+,?\s+)?([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})$/); // "Nov 14, 2026", "Sat Nov 14 2026"
+  if (m && monthOf(m[1]) !== undefined) return make(+m[3], monthOf(m[1]), +m[2]);
+  return null;
+}
+
+// "Completed" is set by an admin on the event page. events.status is free
+// text and nothing else writes it after creation, so this is the whole
+// definition — see setEventStatus in supabaseClient.js.
+const isCompletedEvent = (e) => String(e?.status || "").trim().toLowerCase() === "completed";
 
 function progressOf(event) {
   const all = event.phases.flatMap((p) => p.tasks);
@@ -243,6 +290,7 @@ function StatusTag({ status }) {
     "Early planning": { bg: COLORS.line, fg: COLORS.inkSoft },
     "Awaiting approval": { bg: COLORS.clayPale, fg: COLORS.clayDeep },
     "Changes requested": { bg: COLORS.clay, fg: COLORS.card },
+    "Completed": { bg: COLORS.paperDeep, fg: COLORS.inkSoft },
   };
   const s = map[status] || map["Early planning"];
   return (
@@ -3616,9 +3664,22 @@ function DeleteAccountControl({ isSelf, onDelete }) {
   );
 }
 
-function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask, onAddTask, onDeleteTask, onSubmitProposalReview, onSendProposal, onRejectProposal, onResetProposal, onOpenDocument, onAddProposalItem, onUpdateProposalItem, onDeleteProposalItem, onRequestApproval, onReleaseApproval, onEditApproval, onDeleteApproval, onAddVendor, onCycleVendorStatus, onUpdateVendorPhone, onUpdateVendorCost, onUpdateVendorDeposit, onUpdateVendorDetails, onUpdateVendorBalanceDueDate, onDeleteVendor, onAddClientPayment, onDeleteClientPayment, onUpdateEventBalanceDueDate, onAddRunSheetItem, onUpdateRunSheetItem, onDeleteRunSheetItem, onMoveRunSheetItem, onAddReminder, onUpdateReminder, onDeleteReminder, onSendMessage, onDeleteMessage, onPreviewClient, onDeleteProject, onApproveTaskRequest, onDismissTaskRequest }) {
+function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask, onAddTask, onDeleteTask, onSubmitProposalReview, onSendProposal, onRejectProposal, onResetProposal, onOpenDocument, onAddProposalItem, onUpdateProposalItem, onDeleteProposalItem, onRequestApproval, onReleaseApproval, onEditApproval, onDeleteApproval, onAddVendor, onCycleVendorStatus, onUpdateVendorPhone, onUpdateVendorCost, onUpdateVendorDeposit, onUpdateVendorDetails, onUpdateVendorBalanceDueDate, onDeleteVendor, onAddClientPayment, onDeleteClientPayment, onUpdateEventBalanceDueDate, onAddRunSheetItem, onUpdateRunSheetItem, onDeleteRunSheetItem, onMoveRunSheetItem, onAddReminder, onUpdateReminder, onDeleteReminder, onSetEventStatus, onSendMessage, onDeleteMessage, onPreviewClient, onDeleteProject, onApproveTaskRequest, onDismissTaskRequest }) {
   const [tab, setTab] = useState("overview");
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [statusError, setStatusError] = useState("");
   const pct = progressOf(event);
+  const toggleCompleted = async () => {
+    setStatusError("");
+    setStatusSaving(true);
+    try {
+      await onSetEventStatus(isCompletedEvent(event) ? "Early planning" : "Completed");
+    } catch (err) {
+      setStatusError("Couldn't update this event — try again.");
+    } finally {
+      setStatusSaving(false);
+    }
+  };
 
   return (
     <div style={{ maxWidth: 920, margin: "0 auto", padding: "0 20px 60px" }}>
@@ -3632,7 +3693,23 @@ function StudioEventDetail({ event, isAdmin, onBack, onToggleTask, onAssignTask,
         >
           <ChevronLeft size={15} /> All productions
         </button>
-        {isAdmin && onDeleteProject && <DeleteProjectControl onDelete={onDeleteProject} />}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          {isAdmin && onSetEventStatus && (
+            <button
+              onClick={toggleCompleted}
+              disabled={statusSaving}
+              style={{
+                display: "flex", alignItems: "center", gap: 6, background: "none", border: `1px solid ${COLORS.line}`, borderRadius: 4,
+                color: COLORS.inkSoft, fontFamily: FONT_BODY, fontSize: 12, fontWeight: 600, padding: "7px 12px",
+                cursor: statusSaving ? "default" : "pointer", opacity: statusSaving ? 0.6 : 1,
+              }}
+            >
+              <CheckCircle2 size={14} /> {statusSaving ? "Saving…" : isCompletedEvent(event) ? "Reopen event" : "Mark as completed"}
+            </button>
+          )}
+          {statusError && <span style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.clayDeep }}>{statusError}</span>}
+          {isAdmin && onDeleteProject && <DeleteProjectControl onDelete={onDeleteProject} />}
+        </div>
       </div>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20, flexWrap: "wrap", marginBottom: 22 }}>
@@ -3864,15 +3941,17 @@ function ClientBottomNav({ active, onChange, dots }) {
   return (
     <div
       style={{
-        display: "flex", justifyContent: "space-around", alignItems: "center", padding: "10px 6px 14px",
-        background: COLORS.card, borderTop: `1px solid ${COLORS.line}`, position: "sticky", bottom: 0,
+        padding: "10px 6px 14px", background: COLORS.card, borderTop: `1px solid ${COLORS.line}`,
+        position: "sticky", bottom: 0, zIndex: 10,
       }}
     >
-      {item("overview", "Overview", ListChecks)}
-      {item("proposal", "Proposal", FileText)}
-      {item("approvals", "Approvals", Stamp)}
-      {item("money", "Money", Banknote)}
-      {item("messages", "Messages", MessageCircle)}
+      <div style={{ display: "flex", justifyContent: "space-around", alignItems: "center", maxWidth: 620, margin: "0 auto" }}>
+        {item("overview", "Overview", ListChecks)}
+        {item("proposal", "Proposal", FileText)}
+        {item("approvals", "Approvals", Stamp)}
+        {item("money", "Money", Banknote)}
+        {item("messages", "Messages", MessageCircle)}
+      </div>
     </div>
   );
 }
@@ -4554,15 +4633,16 @@ function AppBottomNav({ active, isAdmin, onDashboard, onCalendar, onFinance, onM
   return (
     <div
       style={{
-        display: "flex", justifyContent: "space-around", alignItems: "center", padding: "10px 6px 14px",
-        background: "rgba(20,20,20,0.97)", borderTop: "1px solid rgba(255,255,255,0.08)",
-        position: "sticky", bottom: 0,
+        padding: "10px 6px 14px", background: "#141414", borderTop: "1px solid rgba(255,255,255,0.08)",
+        position: "sticky", bottom: 0, zIndex: 10,
       }}
     >
-      {item("dashboard", "Dashboard", Building2, onDashboard)}
-      {item("calendar", "Calendar", Calendar, onCalendar)}
-      {isAdmin && item("finance", "Money", Banknote, onFinance)}
-      {item("more", "More", MoreHorizontalIcon, onMore)}
+      <div style={{ display: "flex", justifyContent: "space-around", alignItems: "center", maxWidth: 520, margin: "0 auto" }}>
+        {item("dashboard", "Dashboard", Building2, onDashboard)}
+        {item("calendar", "Calendar", Calendar, onCalendar)}
+        {isAdmin && item("finance", "Money", Banknote, onFinance)}
+        {item("more", "More", MoreHorizontalIcon, onMore)}
+      </div>
     </div>
   );
 }
@@ -4582,15 +4662,34 @@ function MoreHorizontalIcon({ size }) {
 // touches vendors[].cost/deposit here, since those come back masked
 // (null) for team members (0033_finance_view_restore.sql) and this
 // screen is the first thing every planner sees, not just admins.
-function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalendar, onOpenFinance, onOpenMore }) {
+function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalendar, onOpenFinance, onOpenMore, view = "active", onViewChange = () => {} }) {
   const totalBudget = events.reduce((s, e) => s + (e.budget?.total || 0), 0);
   const totalReceived = events.reduce((s, e) => s + (e.clientPayments || []).reduce((s2, p) => s2 + p.amount, 0), 0);
   const totalOutstanding = Math.max(0, totalBudget - totalReceived);
   const pct = totalBudget > 0 ? Math.min(100, Math.round((totalReceived / totalBudget) * 100)) : 0;
-  const upcoming = [...events]
-    .filter((e) => e.date)
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(0, 3);
+  // Active vs Completed. "Completed" is set by an admin on the event itself
+  // (isCompletedEvent). Everything else is active — including events whose
+  // date has passed, which are flagged rather than hidden, since an event
+  // can be over while money or approvals are still outstanding. Every event
+  // stays reachable from here. Dates are free text (see parseEventDate), so
+  // active events fall into: dated and still ahead (soonest first), date
+  // unknown or unreadable, and past (latest first).
+  const activeEvents = events.filter((e) => !isCompletedEvent(e));
+  const completedEvents = events.filter(isCompletedEvent);
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const withDate = (list) => list.map((e) => ({ ev: e, when: parseEventDate(e.date) }));
+  const stamp = (r) => (r.when ? r.when.getTime() : -Infinity);
+  const newestFirst = (x, y) => (stamp(y) === stamp(x) ? 0 : stamp(y) > stamp(x) ? 1 : -1);
+  const datedActive = withDate(activeEvents);
+  const groups = view === "completed"
+    ? [{ title: "Completed events", rows: withDate(completedEvents).sort(newestFirst) }]
+    : [
+        { title: "Upcoming events", rows: datedActive.filter((r) => r.when && r.when >= startOfToday).sort((x, y) => x.when - y.when) },
+        { title: "Date to be confirmed", rows: datedActive.filter((r) => !r.when) },
+        { title: "Past date, still active", rows: datedActive.filter((r) => r.when && r.when < startOfToday).sort(newestFirst) },
+      ];
+  const visibleGroups = groups.filter((g) => g.rows.length > 0);
 
   const statCard = (Icon, label, value) => (
     <div style={{ background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 14 }}>
@@ -4616,40 +4715,59 @@ function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalend
         </h1>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
-          {statCard(Building2, "Active events", events.length)}
+          {statCard(Building2, "Active events", activeEvents.length)}
           {statCard(Wallet, "Total budget", currency(totalBudget))}
           {statCard(Banknote, "Received", currency(totalReceived))}
           {statCard(Clock, "Outstanding", currency(totalOutstanding))}
         </div>
 
-        {upcoming.length > 0 && (
-          <>
-            <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700, color: "white", marginBottom: 10 }}>Upcoming events</div>
-            {upcoming.map((ev) => (
-              <div
-                key={ev.id}
-                onClick={() => onOpen(ev.id)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 12, background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)",
-                  borderRadius: 12, padding: "12px 14px", marginBottom: 8, cursor: "pointer",
-                }}
-              >
-                <div style={{ width: 42, textAlign: "center", flexShrink: 0 }}>
-                  <div style={{ fontFamily: FONT_BODY, fontSize: 9, color: COLORS.brass, fontWeight: 700, textTransform: "uppercase" }}>
-                    {ev.date ? new Date(ev.date + "T00:00:00").toLocaleDateString("en-US", { month: "short" }) : "—"}
+        <div style={{ display: "flex", gap: 6, background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 999, padding: 4, marginBottom: 16 }}>
+          {[["active", "Active", activeEvents.length], ["completed", "Completed", completedEvents.length]].map(([key, label, n]) => (
+            <button
+              key={key}
+              onClick={() => onViewChange(key)}
+              style={{
+                flex: 1, border: "none", borderRadius: 999, padding: "8px 12px", cursor: "pointer", fontFamily: FONT_BODY, fontSize: 12, fontWeight: 700,
+                background: view === key ? COLORS.brass : "transparent", color: view === key ? "#FFFFFF" : "rgba(255,255,255,0.5)",
+              }}
+            >
+              {label} <span style={{ fontFamily: FONT_MONO, fontWeight: 600, opacity: 0.75 }}>{n}</span>
+            </button>
+          ))}
+        </div>
+
+        {visibleGroups.map((g) => (
+          <React.Fragment key={g.title}>
+            <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700, color: "white", margin: "6px 0 10px" }}>{g.title}</div>
+            {g.rows.map(({ ev, when }) => {
+              // Text we couldn't read as a date (other than the default "TBD") is still shown, beside the venue.
+              const rawText = !when && ev.date && !/^tbd$/i.test(ev.date.trim()) ? ev.date.trim() : null;
+              return (
+                <div
+                  key={ev.id}
+                  onClick={() => onOpen(ev.id)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 12, background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)",
+                    borderRadius: 12, padding: "12px 14px", marginBottom: 8, cursor: "pointer",
+                  }}
+                >
+                  <div style={{ width: 42, textAlign: "center", flexShrink: 0 }}>
+                    <div style={{ fontFamily: FONT_BODY, fontSize: 9, color: COLORS.brass, fontWeight: 700, textTransform: "uppercase" }}>
+                      {when ? when.toLocaleDateString("en-US", { month: "short" }) : "TBD"}
+                    </div>
+                    <div style={{ fontFamily: FONT_MONO, fontSize: 17, color: "white", fontWeight: 600 }}>
+                      {when ? when.getDate() : "—"}
+                    </div>
                   </div>
-                  <div style={{ fontFamily: FONT_MONO, fontSize: 17, color: "white", fontWeight: 600 }}>
-                    {ev.date ? new Date(ev.date + "T00:00:00").getDate() : "—"}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.name}</div>
+                    <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{[rawText, ev.venue].filter(Boolean).join(" · ")}</div>
                   </div>
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.name}</div>
-                  <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{ev.venue}</div>
-                </div>
-              </div>
-            ))}
-          </>
-        )}
+              );
+            })}
+          </React.Fragment>
+        ))}
 
         <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700, color: "white", margin: "18px 0 10px" }}>Money overview</div>
         <div style={{ background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 16, marginBottom: 20 }}>
@@ -4671,6 +4789,12 @@ function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalend
             </div>
           </div>
         </div>
+
+        {events.length > 0 && visibleGroups.length === 0 && (
+          <div style={{ textAlign: "center", padding: "20px 0", fontFamily: FONT_BODY, color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
+            {view === "completed" ? "No completed events yet. They appear here once an admin marks an event completed." : "No active events — everything has been completed."}
+          </div>
+        )}
 
         {events.length === 0 && (
           <div style={{ textAlign: "center", padding: "24px 0", fontFamily: FONT_BODY, color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
@@ -5314,6 +5438,7 @@ export default function BitAffairs() {
   const [viewingFinance, setViewingFinance] = useState(false);
   const [viewingMore, setViewingMore] = useState(false);
   const [viewingCalendar, setViewingCalendar] = useState(false);
+  const [dashboardView, setDashboardView] = useState("active"); // kept here, not inside the dashboard, so it survives opening an event and coming back
   const [notifications, setNotifications] = useState([]);
   const [pushPermission, setPushPermission] = useState(pushSupported ? Notification.permission : "unsupported");
   const [pushSubscribed, setPushSubscribed] = useState(() => {
@@ -5981,6 +6106,18 @@ export default function BitAffairs() {
     }
   };
 
+  // Rethrows so the button on the event page can show its own error — a
+  // silent failure here would look like the button just did nothing.
+  const handleSetEventStatus = async (eventId, status) => {
+    try {
+      await sbSetEventStatus(eventId, status);
+      await refreshEvent(eventId);
+    } catch (err) {
+      console.error("Failed to update event status", err);
+      throw err;
+    }
+  };
+
   const handleSendMessage = async (eventId, message) => {
     try {
       await sbSendMessage(eventId, message.authorType, message.authorName, message.body, message.imageData);
@@ -6210,6 +6347,8 @@ export default function BitAffairs() {
         onOpenCalendar={() => setViewingCalendar(true)}
         onOpenFinance={() => setViewingFinance(true)}
         onOpenMore={() => setViewingMore(true)}
+        view={dashboardView}
+        onViewChange={setDashboardView}
       />
     );
   }
@@ -6394,6 +6533,7 @@ export default function BitAffairs() {
             onAddReminder={(fields) => handleAddReminder(openEvent.id, fields)}
             onUpdateReminder={(id, fields) => handleUpdateReminder(openEvent.id, id, fields)}
             onDeleteReminder={(id) => handleDeleteReminder(openEvent.id, id)}
+            onSetEventStatus={(status) => handleSetEventStatus(openEvent.id, status)}
             onSendMessage={(message) => handleSendMessage(openEvent.id, message)}
             onDeleteMessage={(messageId) => handleDeleteMessage(openEvent.id, messageId)}
             onPreviewClient={() => {
