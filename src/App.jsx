@@ -3018,7 +3018,7 @@ function AgencyFinancials({ events, onBack }) {
     const clientOutstanding = Math.max(0, (e.budget?.total || 0) - received);
     const clientOverdue = clientOutstanding > 0 && e.clientBalanceDueDate && e.clientBalanceDueDate < todayISO();
     return {
-      id: e.id, name: e.name, date: e.date, budgetTotal: e.budget?.total || 0,
+      id: e.id, name: e.name, date: e.date, completed: isCompletedEvent(e), budgetTotal: e.budget?.total || 0,
       received, clientOutstanding, clientOverdue, clientBalanceDueDate: e.clientBalanceDueDate,
       vendorBalance, vendorOverdue,
     };
@@ -3036,12 +3036,13 @@ function AgencyFinancials({ events, onBack }) {
   const overdueClientCount = rows.filter((r) => r.clientOverdue).length;
   const overdueVendorCount = rows.filter((r) => r.vendorOverdue).length;
 
-  const statBox = (label, value, warn) => (
-    <div style={{ padding: "14px 16px", borderRadius: 4, background: warn ? COLORS.clayPale : COLORS.paper }}>
+  const statBox = (label, value, warn, note, small) => (
+    <div style={{ padding: small ? "10px 12px" : "14px 16px", borderRadius: 4, background: warn ? COLORS.clayPale : COLORS.paper }}>
       <div style={{ fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: warn ? COLORS.clayDeep : COLORS.inkFaint, marginBottom: 6 }}>
         {label}
       </div>
-      <div style={{ fontFamily: FONT_MONO, fontSize: 20, fontWeight: 700, color: warn ? COLORS.clayDeep : COLORS.ink }}>{value}</div>
+      <div style={{ fontFamily: FONT_MONO, fontSize: small ? 14 : 20, fontWeight: 700, color: warn ? COLORS.clayDeep : COLORS.ink, overflowWrap: "anywhere" }}>{value}</div>
+      {note && <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: warn ? COLORS.clayDeep : COLORS.inkFaint, marginTop: 4 }}>{note}</div>}
     </div>
   );
 
@@ -3055,53 +3056,36 @@ function AgencyFinancials({ events, onBack }) {
       </button>
       <SectionCard>
         <SectionTitle>Agency finances</SectionTitle>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
+        <div style={{ fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: COLORS.inkFaint, marginBottom: 10 }}>
+          Each event
+        </div>
+        {rows.length === 0 && (
+          <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkFaint }}>No events yet.</div>
+        )}
+        {rows.map((r) => (
+          <div key={r.id} style={{ border: `1px solid ${COLORS.line}`, borderRadius: 4, padding: 16, marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+              <div style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 18, color: COLORS.ink }}>{r.name}</div>
+              <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.inkFaint }}>{r.date}{r.completed ? " · Completed" : ""}</div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+              {statBox("Budget", currency(r.budgetTotal), false, null, true)}
+              {statBox("Received", currency(r.received), false, null, true)}
+              {statBox("Client outstanding", currency(r.clientOutstanding), r.clientOverdue, r.clientBalanceDueDate ? `${r.clientOverdue ? "Overdue — was due" : "Due"} ${r.clientBalanceDueDate}` : null, true)}
+              {statBox("Owed to vendors", currency(r.vendorBalance), r.vendorOverdue, r.vendorOverdue ? "A vendor balance is overdue" : null, true)}
+            </div>
+          </div>
+        ))}
+
+        <div style={{ fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: COLORS.inkFaint, margin: "24px 0 10px" }}>
+          All events combined
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 10 }}>
           {statBox("Total budget, all events", currency(totals.budget))}
           {statBox("Received from clients", currency(totals.received))}
           {statBox(`Outstanding from clients${overdueClientCount ? ` (${overdueClientCount} overdue)` : ""}`, currency(totals.clientOutstanding), overdueClientCount > 0)}
           {statBox(`Owed to vendors${overdueVendorCount ? ` (${overdueVendorCount} overdue)` : ""}`, currency(totals.vendorBalance), overdueVendorCount > 0)}
         </div>
-
-        <div style={{ fontFamily: FONT_BODY, fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: COLORS.inkFaint, marginBottom: 8 }}>
-          By event
-        </div>
-        {rows.length === 0 && (
-          <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: COLORS.inkFaint }}>No events yet.</div>
-        )}
-        {rows.map((r, i) => (
-          <div
-            key={r.id}
-            style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "12px 0",
-              borderBottom: i < rows.length - 1 ? `1px solid ${COLORS.line}` : "none", flexWrap: "wrap",
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 160 }}>
-              <div style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 600, color: COLORS.ink }}>{r.name}</div>
-              <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkFaint, marginTop: 2 }}>{r.date}</div>
-            </div>
-            <div style={{ textAlign: "right", minWidth: 130 }}>
-              <div style={{ fontFamily: FONT_BODY, fontSize: 10, color: COLORS.inkFaint }}>Client outstanding</div>
-              <div style={{ fontFamily: FONT_MONO, fontSize: 13, fontWeight: 700, color: r.clientOverdue ? COLORS.clayDeep : COLORS.ink }}>
-                {currency(r.clientOutstanding)}
-              </div>
-              {r.clientBalanceDueDate && (
-                <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: r.clientOverdue ? COLORS.clayDeep : COLORS.inkFaint }}>
-                  {r.clientOverdue ? "Overdue — " : "Due "}{r.clientBalanceDueDate}
-                </div>
-              )}
-            </div>
-            <div style={{ textAlign: "right", minWidth: 130 }}>
-              <div style={{ fontFamily: FONT_BODY, fontSize: 10, color: COLORS.inkFaint }}>Owed to vendors</div>
-              <div style={{ fontFamily: FONT_MONO, fontSize: 13, fontWeight: 700, color: r.vendorOverdue ? COLORS.clayDeep : COLORS.ink }}>
-                {currency(r.vendorBalance)}
-              </div>
-              {r.vendorOverdue && (
-                <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.clayDeep }}>Overdue</div>
-              )}
-            </div>
-          </div>
-        ))}
       </SectionCard>
     </div>
   );
@@ -4663,10 +4647,6 @@ function MoreHorizontalIcon({ size }) {
 // (null) for team members (0033_finance_view_restore.sql) and this
 // screen is the first thing every planner sees, not just admins.
 function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalendar, onOpenFinance, onOpenMore, view = "active", onViewChange = () => {} }) {
-  const totalBudget = events.reduce((s, e) => s + (e.budget?.total || 0), 0);
-  const totalReceived = events.reduce((s, e) => s + (e.clientPayments || []).reduce((s2, p) => s2 + p.amount, 0), 0);
-  const totalOutstanding = Math.max(0, totalBudget - totalReceived);
-  const pct = totalBudget > 0 ? Math.min(100, Math.round((totalReceived / totalBudget) * 100)) : 0;
   // Active vs Completed. "Completed" is set by an admin on the event itself
   // (isCompletedEvent). Everything else is active — including events whose
   // date has passed, which are flagged rather than hidden, since an event
@@ -4691,16 +4671,6 @@ function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalend
       ];
   const visibleGroups = groups.filter((g) => g.rows.length > 0);
 
-  const statCard = (Icon, label, value) => (
-    <div style={{ background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 14 }}>
-      <div style={{ width: 26, height: 26, borderRadius: 8, background: "rgba(217,30,75,0.15)", display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.brass, marginBottom: 8 }}>
-        <Icon size={14} />
-      </div>
-      <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{label}</div>
-      <div style={{ fontFamily: FONT_MONO, fontSize: 17, fontWeight: 600, color: "white", marginTop: 2 }}>{value}</div>
-    </div>
-  );
-
   return (
     <div style={{ minHeight: "100vh", background: "#141414", display: "flex", flexDirection: "column" }}>
       <style>{FONT_IMPORT}</style>
@@ -4713,13 +4683,6 @@ function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalend
         <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 21, color: "white", margin: "0 0 16px" }}>
           Current productions
         </h1>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
-          {statCard(Building2, "Active events", activeEvents.length)}
-          {statCard(Wallet, "Total budget", currency(totalBudget))}
-          {statCard(Banknote, "Received", currency(totalReceived))}
-          {statCard(Clock, "Outstanding", currency(totalOutstanding))}
-        </div>
 
         <div style={{ display: "flex", gap: 6, background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 999, padding: 4, marginBottom: 16 }}>
           {[["active", "Active", activeEvents.length], ["completed", "Completed", completedEvents.length]].map(([key, label, n]) => (
@@ -4742,53 +4705,57 @@ function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalend
             {g.rows.map(({ ev, when }) => {
               // Text we couldn't read as a date (other than the default "TBD") is still shown, beside the venue.
               const rawText = !when && ev.date && !/^tbd$/i.test(ev.date.trim()) ? ev.date.trim() : null;
+              // Each event carries its own budget and money — nothing is added up across events on this screen
+              // (the Money screen keeps one combined total, last, for admins who want it).
+              const budget = ev.budget?.total || 0;
+              const received = (ev.clientPayments || []).reduce((s, p) => s + p.amount, 0);
+              const outstanding = Math.max(0, budget - received);
+              const pct = budget > 0 ? Math.min(100, Math.round((received / budget) * 100)) : null;
+              const unsettled = isCompletedEvent(ev) && outstanding > 0; // finished but still owed — worth noticing
               return (
                 <div
                   key={ev.id}
                   onClick={() => onOpen(ev.id)}
                   style={{
-                    display: "flex", alignItems: "center", gap: 12, background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)",
+                    background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)",
                     borderRadius: 12, padding: "12px 14px", marginBottom: 8, cursor: "pointer",
                   }}
                 >
-                  <div style={{ width: 42, textAlign: "center", flexShrink: 0 }}>
-                    <div style={{ fontFamily: FONT_BODY, fontSize: 9, color: COLORS.brass, fontWeight: 700, textTransform: "uppercase" }}>
-                      {when ? when.toLocaleDateString("en-US", { month: "short" }) : "TBD"}
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ width: 42, textAlign: "center", flexShrink: 0 }}>
+                      <div style={{ fontFamily: FONT_BODY, fontSize: 9, color: COLORS.brass, fontWeight: 700, textTransform: "uppercase" }}>
+                        {when ? when.toLocaleDateString("en-US", { month: "short" }) : "TBD"}
+                      </div>
+                      <div style={{ fontFamily: FONT_MONO, fontSize: 17, color: "white", fontWeight: 600 }}>
+                        {when ? when.getDate() : "—"}
+                      </div>
                     </div>
-                    <div style={{ fontFamily: FONT_MONO, fontSize: 17, color: "white", fontWeight: 600 }}>
-                      {when ? when.getDate() : "—"}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.name}</div>
+                      <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{[rawText, ev.venue].filter(Boolean).join(" · ")}</div>
                     </div>
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.name}</div>
-                    <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{[rawText, ev.venue].filter(Boolean).join(" · ")}</div>
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+                      {[["Budget", budget, "white"], ["Received", received, "white"], ["Outstanding", outstanding, unsettled ? "#FF9A7A" : "white"]].map(([label, value, color]) => (
+                        <div key={label} style={{ minWidth: 0 }}>
+                          <div style={{ fontFamily: FONT_BODY, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{label}</div>
+                          <div style={{ fontFamily: FONT_MONO, fontSize: 12, fontWeight: 600, color, marginTop: 2, overflowWrap: "anywhere" }}>{currency(value)}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                      <div style={{ flex: 1, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                        <div style={{ width: `${pct || 0}%`, height: "100%", background: COLORS.brass }} />
+                      </div>
+                      <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: "rgba(255,255,255,0.5)", minWidth: 30, textAlign: "right" }}>{pct === null ? "—" : `${pct}%`}</div>
+                    </div>
                   </div>
                 </div>
               );
             })}
           </React.Fragment>
         ))}
-
-        <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700, color: "white", margin: "18px 0 10px" }}>Money overview</div>
-        <div style={{ background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 16, marginBottom: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ width: 84, height: 84, borderRadius: "50%", background: `conic-gradient(${COLORS.brass} 0% ${pct}%, rgba(255,255,255,0.08) ${pct}% 100%)`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <div style={{ width: 60, height: 60, borderRadius: "50%", background: "#1E1E1E", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT_MONO, fontSize: 13, color: "white", fontWeight: 600 }}>
-                {pct}%
-              </div>
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontFamily: FONT_BODY, fontSize: 11, padding: "4px 0", color: "rgba(255,255,255,0.6)" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 7, height: 7, borderRadius: 2, background: COLORS.brass }} /> Received</span>
-                <span style={{ color: "white" }}>{currency(totalReceived)}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontFamily: FONT_BODY, fontSize: 11, padding: "4px 0", color: "rgba(255,255,255,0.6)" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 7, height: 7, borderRadius: 2, background: "rgba(255,255,255,0.08)" }} /> Outstanding</span>
-                <span style={{ color: "white" }}>{currency(totalOutstanding)}</span>
-              </div>
-            </div>
-          </div>
-        </div>
 
         {events.length > 0 && visibleGroups.length === 0 && (
           <div style={{ textAlign: "center", padding: "20px 0", fontFamily: FONT_BODY, color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
