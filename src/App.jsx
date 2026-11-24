@@ -3,7 +3,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Users, Calendar, MapPin,
   Circle, CheckCircle2, Send, Stamp, FileText, Lock,
   Wallet, ListChecks, Eye, EyeOff, Building2, Truck, Printer, Mail, Phone, Bell, BellOff, Pencil,
-  MessageCircle, ImagePlus, Banknote, Clock, ChevronUp, ChevronDown, LogOut
+  MessageCircle, ImagePlus, Banknote, Clock, ChevronUp, ChevronDown, LogOut, Sun, Moon
 } from "lucide-react";
 import {
   supabase, supabaseConfigured,
@@ -71,9 +71,27 @@ if (typeof document !== "undefined" && !document.getElementById("bit-theme")) {
   const toCss = (t) => Object.entries(t).map(([k, v]) => `--bit-${k}:${v}`).join(";");
   const themeStyle = document.createElement("style");
   themeStyle.id = "bit-theme";
-  themeStyle.textContent = `:root{${toCss(THEME_LIGHT)}}[data-theme="dark"]{${toCss(THEME_DARK)}}`;
+  themeStyle.textContent = `:root{${toCss(THEME_LIGHT)}}[data-theme="dark"]{${toCss(THEME_DARK)}}html,body{background:var(--bit-paper)}`;
   document.head.appendChild(themeStyle);
 }
+
+// Light / dark preference — one choice per device, remembered in localStorage.
+// It is applied as data-theme on <html>, so every screen that uses COLORS (and
+// the page background itself) follows it. Light is the default.
+const THEME_KEY = "bitaffairs-theme";
+function readTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+}
+function applyTheme(theme) {
+  if (typeof document === "undefined") return;
+  document.documentElement.setAttribute("data-theme", theme);
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#141414" : "#F8F8F6");
+}
+applyTheme(readTheme());
 
 const FONT_DISPLAY = "'Newsreader', serif";
 const FONT_BODY = "'IBM Plex Sans', sans-serif";
@@ -4606,7 +4624,7 @@ function AppBottomNav({ active, isAdmin, onDashboard, onCalendar, onFinance, onM
       onClick={onClick}
       style={{
         display: "flex", flexDirection: "column", alignItems: "center", gap: 3, background: "none", border: "none",
-        cursor: "pointer", padding: "6px 4px", color: active === key ? COLORS.brass : "rgba(255,255,255,0.4)",
+        cursor: "pointer", padding: "6px 4px", color: active === key ? COLORS.brass : COLORS.inkFaint,
         fontFamily: FONT_BODY, fontSize: 9,
       }}
     >
@@ -4617,7 +4635,7 @@ function AppBottomNav({ active, isAdmin, onDashboard, onCalendar, onFinance, onM
   return (
     <div
       style={{
-        padding: "10px 6px 14px", background: "#141414", borderTop: "1px solid rgba(255,255,255,0.08)",
+        padding: "10px 6px 14px", background: COLORS.paper, borderTop: `1px solid ${COLORS.line}`,
         position: "sticky", bottom: 0, zIndex: 10,
       }}
     >
@@ -4672,26 +4690,26 @@ function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalend
   const visibleGroups = groups.filter((g) => g.rows.length > 0);
 
   return (
-    <div style={{ minHeight: "100vh", background: "#141414", display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: "100vh", background: COLORS.paper, display: "flex", flexDirection: "column" }}>
       <style>{FONT_IMPORT}</style>
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 18px 24px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+          <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.inkSoft }}>
             Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}
           </div>
         </div>
-        <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 21, color: "white", margin: "0 0 16px" }}>
+        <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 21, color: COLORS.ink, margin: "0 0 16px" }}>
           Current productions
         </h1>
 
-        <div style={{ display: "flex", gap: 6, background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 999, padding: 4, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 6, background: COLORS.card, border: `1px solid ${COLORS.line}`, borderRadius: 999, padding: 4, marginBottom: 16 }}>
           {[["active", "Active", activeEvents.length], ["completed", "Completed", completedEvents.length]].map(([key, label, n]) => (
             <button
               key={key}
               onClick={() => onViewChange(key)}
               style={{
                 flex: 1, border: "none", borderRadius: 999, padding: "8px 12px", cursor: "pointer", fontFamily: FONT_BODY, fontSize: 12, fontWeight: 700,
-                background: view === key ? COLORS.brass : "transparent", color: view === key ? "#FFFFFF" : "rgba(255,255,255,0.5)",
+                background: view === key ? COLORS.brass : "transparent", color: view === key ? "#FFFFFF" : COLORS.inkSoft,
               }}
             >
               {label} <span style={{ fontFamily: FONT_MONO, fontWeight: 600, opacity: 0.75 }}>{n}</span>
@@ -4701,7 +4719,7 @@ function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalend
 
         {visibleGroups.map((g) => (
           <React.Fragment key={g.title}>
-            <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700, color: "white", margin: "6px 0 10px" }}>{g.title}</div>
+            <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 700, color: COLORS.ink, margin: "6px 0 10px" }}>{g.title}</div>
             {g.rows.map(({ ev, when }) => {
               // Text we couldn't read as a date (other than the default "TBD") is still shown, beside the venue.
               const rawText = !when && ev.date && !/^tbd$/i.test(ev.date.trim()) ? ev.date.trim() : null;
@@ -4717,7 +4735,7 @@ function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalend
                   key={ev.id}
                   onClick={() => onOpen(ev.id)}
                   style={{
-                    background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)",
+                    background: COLORS.card, border: `1px solid ${COLORS.line}`,
                     borderRadius: 12, padding: "12px 14px", marginBottom: 8, cursor: "pointer",
                   }}
                 >
@@ -4726,29 +4744,29 @@ function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalend
                       <div style={{ fontFamily: FONT_BODY, fontSize: 9, color: COLORS.brass, fontWeight: 700, textTransform: "uppercase" }}>
                         {when ? when.toLocaleDateString("en-US", { month: "short" }) : "TBD"}
                       </div>
-                      <div style={{ fontFamily: FONT_MONO, fontSize: 17, color: "white", fontWeight: 600 }}>
+                      <div style={{ fontFamily: FONT_MONO, fontSize: 17, color: COLORS.ink, fontWeight: 600 }}>
                         {when ? when.getDate() : "—"}
                       </div>
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.name}</div>
-                      <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{[rawText, ev.venue].filter(Boolean).join(" · ")}</div>
+                      <div style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600, color: COLORS.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.name}</div>
+                      <div style={{ fontFamily: FONT_BODY, fontSize: 11, color: COLORS.inkFaint, marginTop: 2 }}>{[rawText, ev.venue].filter(Boolean).join(" · ")}</div>
                     </div>
                   </div>
-                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${COLORS.line}` }}>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
-                      {[["Budget", budget, "white"], ["Received", received, "white"], ["Outstanding", outstanding, unsettled ? "#FF9A7A" : "white"]].map(([label, value, color]) => (
+                      {[["Budget", budget, COLORS.ink], ["Received", received, COLORS.ink], ["Outstanding", outstanding, unsettled ? COLORS.clayDeep : COLORS.ink]].map(([label, value, color]) => (
                         <div key={label} style={{ minWidth: 0 }}>
-                          <div style={{ fontFamily: FONT_BODY, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{label}</div>
+                          <div style={{ fontFamily: FONT_BODY, fontSize: 10, color: COLORS.inkFaint }}>{label}</div>
                           <div style={{ fontFamily: FONT_MONO, fontSize: 12, fontWeight: 600, color, marginTop: 2, overflowWrap: "anywhere" }}>{currency(value)}</div>
                         </div>
                       ))}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
-                      <div style={{ flex: 1, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                      <div style={{ flex: 1, height: 4, borderRadius: 2, background: COLORS.line, overflow: "hidden" }}>
                         <div style={{ width: `${pct || 0}%`, height: "100%", background: COLORS.brass }} />
                       </div>
-                      <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: "rgba(255,255,255,0.5)", minWidth: 30, textAlign: "right" }}>{pct === null ? "—" : `${pct}%`}</div>
+                      <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLORS.inkSoft, minWidth: 30, textAlign: "right" }}>{pct === null ? "—" : `${pct}%`}</div>
                     </div>
                   </div>
                 </div>
@@ -4758,13 +4776,13 @@ function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalend
         ))}
 
         {events.length > 0 && visibleGroups.length === 0 && (
-          <div style={{ textAlign: "center", padding: "20px 0", fontFamily: FONT_BODY, color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
+          <div style={{ textAlign: "center", padding: "20px 0", fontFamily: FONT_BODY, color: COLORS.inkFaint, fontSize: 13 }}>
             {view === "completed" ? "No completed events yet. They appear here once an admin marks an event completed." : "No active events — everything has been completed."}
           </div>
         )}
 
         {events.length === 0 && (
-          <div style={{ textAlign: "center", padding: "24px 0", fontFamily: FONT_BODY, color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
+          <div style={{ textAlign: "center", padding: "24px 0", fontFamily: FONT_BODY, color: COLORS.inkFaint, fontSize: 13 }}>
             No productions yet. Create your first project to get started.
           </div>
         )}
@@ -4773,7 +4791,7 @@ function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalend
           onClick={onNewProject}
           style={{
             width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: COLORS.brass,
-            color: "white", border: "none", borderRadius: 12, padding: 14, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
+            color: "#FFFFFF", border: "none", borderRadius: 12, padding: 14, fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
             cursor: "pointer", boxShadow: "0 8px 20px rgba(217,30,75,0.3)", marginBottom: 12,
           }}
         >
@@ -4789,46 +4807,74 @@ function AppStyleDashboard({ events, isAdmin, onOpen, onNewProject, onOpenCalend
 // Reached from the new bottom nav; tapping through still lands on the
 // existing (light-themed) TeamManagement/AdminQueue screens for now —
 // see the early-return block above for why those weren't rebuilt yet.
-function AppStyleMoreMenu({ isAdmin, pendingCount, onBack, onOpenTeam, onOpenQueue, onSignOut }) {
+function AppStyleMoreMenu({ isAdmin, pendingCount, onBack, onOpenTeam, onOpenQueue, onSignOut, theme, onSetTheme, showPush, pushPermission, pushSubscribed, onEnablePush }) {
   const row = (Icon, label, onClick, badge, danger) => (
     <button
       onClick={onClick}
       style={{
-        display: "flex", alignItems: "center", gap: 12, width: "100%", background: "#1E1E1E", border: "1px solid rgba(255,255,255,0.08)",
+        display: "flex", alignItems: "center", gap: 12, width: "100%", background: COLORS.card, border: `1px solid ${COLORS.line}`,
         borderRadius: 12, padding: "13px 14px", marginBottom: 8, cursor: "pointer", textAlign: "left",
       }}
     >
-      <div style={{ width: 32, height: 32, borderRadius: 9, background: danger ? "rgba(255,255,255,0.06)" : "rgba(217,30,75,0.15)", color: danger ? "rgba(255,255,255,0.4)" : COLORS.brass, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+      <div style={{ width: 32, height: 32, borderRadius: 9, background: danger ? COLORS.line : COLORS.brassPale, color: danger ? COLORS.inkFaint : COLORS.brass, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <Icon size={15} />
       </div>
-      <div style={{ flex: 1, fontFamily: FONT_BODY, fontSize: 13, fontWeight: danger ? 500 : 600, color: danger ? "rgba(255,255,255,0.7)" : "white" }}>{label}</div>
+      <div style={{ flex: 1, fontFamily: FONT_BODY, fontSize: 13, fontWeight: danger ? 500 : 600, color: danger ? COLORS.inkSoft : COLORS.ink }}>{label}</div>
       {badge > 0 && (
-        <span style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "rgba(217,30,75,0.15)", color: COLORS.brass }}>{badge}</span>
+        <span style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: COLORS.brassPale, color: COLORS.brass }}>{badge}</span>
       )}
-      {!danger && <ChevronRight size={16} color="rgba(255,255,255,0.4)" />}
+      {!danger && <ChevronRight size={16} style={{ color: COLORS.inkFaint }} />}
     </button>
   );
 
   return (
-    <div style={{ minHeight: "100vh", background: "#141414", display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: "100vh", background: COLORS.paper, display: "flex", flexDirection: "column" }}>
       <style>{FONT_IMPORT}</style>
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 18px 8px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-          <button onClick={onBack} style={{ width: 30, height: 30, borderRadius: "50%", background: "#1E1E1E", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-            <ChevronLeft size={16} color="white" />
+          <button onClick={onBack} style={{ width: 30, height: 30, borderRadius: "50%", background: COLORS.card, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <ChevronLeft size={16} style={{ color: COLORS.ink }} />
           </button>
-          <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 20, color: "white", margin: 0 }}>More</h1>
+          <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 20, color: COLORS.ink, margin: 0 }}>More</h1>
         </div>
 
         {isAdmin && (
           <>
-            <div style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: "rgba(255,255,255,0.4)", margin: "18px 0 8px" }}>Manage</div>
+            <div style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: COLORS.inkFaint, margin: "18px 0 8px" }}>Manage</div>
             {row(Users, "Team", onOpenTeam)}
             {row(CheckCircle2, "Approvals queue", onOpenQueue, pendingCount)}
           </>
         )}
 
-        <div style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: "rgba(255,255,255,0.4)", margin: "18px 0 8px" }}>Account</div>
+        {showPush && (
+          <>
+            <div style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: COLORS.inkFaint, margin: "18px 0 8px" }}>Notifications</div>
+            {pushPermission === "granted" && pushSubscribed
+              ? row(Bell, "Notifications are on", undefined, 0, true)
+              : pushPermission === "denied"
+                ? row(BellOff, "Notifications are blocked — allow them in your browser's site settings", undefined, 0, true)
+                : row(Bell, pushPermission === "granted" ? "Finish setting up notifications" : "Turn on notifications", onEnablePush)}
+          </>
+        )}
+
+        <div style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: COLORS.inkFaint, margin: "18px 0 8px" }}>Appearance</div>
+        <div style={{ display: "flex", gap: 6, background: COLORS.card, border: `1px solid ${COLORS.line}`, borderRadius: 999, padding: 4, marginBottom: 8 }}>
+          {[["light", "Light"], ["dark", "Dark"]].map(([key, text]) => (
+            <button
+              key={key}
+              onClick={() => onSetTheme && onSetTheme(key)}
+              aria-pressed={theme === key}
+              style={{
+                flex: 1, border: "none", borderRadius: 999, padding: "9px 12px", cursor: "pointer", fontFamily: FONT_BODY, fontSize: 12, fontWeight: 700,
+                background: theme === key ? COLORS.brass : "transparent", color: theme === key ? "#FFFFFF" : COLORS.inkSoft,
+              }}
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: COLORS.inkFaint, margin: "18px 0 8px" }}>Account</div>
         {row(LogOut, "Sign out", onSignOut, 0, true)}
       </div>
       <AppBottomNav active="more" isAdmin={isAdmin} onDashboard={onBack} onCalendar={onBack} onFinance={onBack} onMore={() => {}} />
@@ -4842,17 +4888,17 @@ function AppStyleMoreMenu({ isAdmin, pendingCount, onBack, onOpenTeam, onOpenQue
 // state beats a dead-end button that pretends to work.
 function AppStyleComingSoon({ onBack }) {
   return (
-    <div style={{ minHeight: "100vh", background: "#141414", display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: "100vh", background: COLORS.paper, display: "flex", flexDirection: "column" }}>
       <style>{FONT_IMPORT}</style>
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 18px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-          <button onClick={onBack} style={{ width: 30, height: 30, borderRadius: "50%", background: "#1E1E1E", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-            <ChevronLeft size={16} color="white" />
+          <button onClick={onBack} style={{ width: 30, height: 30, borderRadius: "50%", background: COLORS.card, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <ChevronLeft size={16} style={{ color: COLORS.ink }} />
           </button>
-          <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 20, color: "white", margin: 0 }}>Calendar</h1>
+          <h1 style={{ fontFamily: FONT_DISPLAY, fontStyle: "italic", fontWeight: 500, fontSize: 20, color: COLORS.ink, margin: 0 }}>Calendar</h1>
         </div>
-        <div style={{ textAlign: "center", padding: "60px 20px", fontFamily: FONT_BODY, color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
-          <Calendar size={28} color="rgba(255,255,255,0.2)" style={{ marginBottom: 12 }} />
+        <div style={{ textAlign: "center", padding: "60px 20px", fontFamily: FONT_BODY, color: COLORS.inkFaint, fontSize: 13 }}>
+          <Calendar size={28} style={{ color: COLORS.inkFaint, marginBottom: 12 }} />
           <div>A full calendar view is coming soon.</div>
         </div>
       </div>
@@ -5180,7 +5226,7 @@ function ClientInviteLanding({ onBack }) {
 
 /* ---------------- Top Nav ---------------- */
 
-function TopNav({ role, inEvent, onBackToDashboard, onSignOut, isAdmin, isPreview, pendingCount, onOpenQueue, onOpenTeam, onOpenFinance, pushSupported: showPush, pushPermission, pushSubscribed, onEnablePush }) {
+function TopNav({ theme, onSetTheme, role, inEvent, onBackToDashboard, onSignOut, isAdmin, isPreview, pendingCount, onOpenQueue, onOpenTeam, onOpenFinance, pushSupported: showPush, pushPermission, pushSubscribed, onEnablePush }) {
   return (
     <div
       style={{
@@ -5274,6 +5320,16 @@ function TopNav({ role, inEvent, onBackToDashboard, onSignOut, isAdmin, isPrevie
             )}
           </button>
         )}
+        {onSetTheme && (
+          <button
+            onClick={() => onSetTheme(theme === "dark" ? "light" : "dark")}
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            style={{ display: "flex", alignItems: "center", background: "none", border: "none", padding: 4, color: COLORS.inkFaint, cursor: "pointer" }}
+          >
+            {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
+        )}
         {showPush && !isPreview && (
           <button
             onClick={pushPermission === "default" || (pushPermission === "granted" && !pushSubscribed) ? onEnablePush : undefined}
@@ -5309,12 +5365,12 @@ function TopNav({ role, inEvent, onBackToDashboard, onSignOut, isAdmin, isPrevie
 
 /* ---------------- Live notifications ---------------- */
 
-function NotificationToasts({ notifications, onDismiss }) {
+function NotificationToasts({ notifications, onDismiss, bottomOffset = 0 }) {
   if (notifications.length === 0) return null;
   return (
     <div
       style={{
-        position: "fixed", bottom: "calc(20px + env(safe-area-inset-bottom, 0px))", right: 20, zIndex: 1000,
+        position: "fixed", bottom: `calc(${20 + bottomOffset}px + env(safe-area-inset-bottom, 0px))`, right: 20, zIndex: 1000,
         display: "flex", flexDirection: "column", gap: 8, maxWidth: 320,
       }}
     >
@@ -5340,12 +5396,12 @@ function NotificationToasts({ notifications, onDismiss }) {
   );
 }
 
-function PushNotificationBanner({ onEnable, onDismiss }) {
+function PushNotificationBanner({ onEnable, onDismiss, bottomOffset = 0 }) {
   const [enabling, setEnabling] = useState(false);
   return (
     <div
       style={{
-        position: "fixed", bottom: "calc(20px + env(safe-area-inset-bottom, 0px))", left: 20, zIndex: 999, maxWidth: 320,
+        position: "fixed", bottom: `calc(${20 + bottomOffset}px + env(safe-area-inset-bottom, 0px))`, left: 20, zIndex: 999, maxWidth: 320,
         display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px",
         background: COLORS.card, border: `1px solid ${COLORS.line}`, borderRadius: 6,
         boxShadow: "0 4px 16px rgba(0,0,0,0.18)", fontFamily: FONT_BODY, fontSize: 13,
@@ -5405,6 +5461,16 @@ export default function BitAffairs() {
   const [viewingFinance, setViewingFinance] = useState(false);
   const [viewingMore, setViewingMore] = useState(false);
   const [viewingCalendar, setViewingCalendar] = useState(false);
+  const [theme, setThemeState] = useState(readTheme);
+  const setTheme = (t) => {
+    setThemeState(t);
+    applyTheme(t);
+    try {
+      localStorage.setItem(THEME_KEY, t);
+    } catch {
+      // storage blocked — the choice lasts until reload, harmless
+    }
+  };
   const [dashboardView, setDashboardView] = useState("active"); // kept here, not inside the dashboard, so it survives opening an event and coming back
   const [notifications, setNotifications] = useState([]);
   const [pushPermission, setPushPermission] = useState(pushSupported ? Notification.permission : "unsupported");
@@ -6292,6 +6358,31 @@ export default function BitAffairs() {
     }
   };
 
+  // The notification toasts and the one-time "turn on notifications?" prompt
+  // belong to the shell, but the dashboard / More / Calendar screens return
+  // early and used to skip them entirely — so they draw the same overlays
+  // from here, lifted clear of their bottom nav (the shell, which has no
+  // nav, passes 0 and is unchanged).
+  const overlaysFor = (bottomOffset) => (
+    <>
+      <NotificationToasts
+        bottomOffset={bottomOffset}
+        notifications={notifications}
+        onDismiss={(id) => setNotifications((prev) => prev.filter((n) => n.id !== id))}
+      />
+
+      {pushSupported && VAPID_PUBLIC_KEY && session && !isPreview && !needsClientEventChoice && pushPermission === "default" && !pushBannerDismissed && (
+        <PushNotificationBanner bottomOffset={bottomOffset} onEnable={enableNotifications} onDismiss={dismissPushBanner} />
+      )}
+    </>
+  );
+  const withOverlays = (screen) => (
+    <>
+      {screen}
+      {overlaysFor(76)}
+    </>
+  );
+
   // The new app-style home screen — dark, card-based, its own bottom nav
   // — replaces the classic light TopNav+StudioDashboard pairing only for
   // the plain "nothing else open" studio view, same early-return shape as
@@ -6305,7 +6396,7 @@ export default function BitAffairs() {
     session && role === "studio" && !openEventId && !creatingProject &&
     !viewingTeam && !viewingFinance && !viewingQueue && !viewingMore && !viewingCalendar
   ) {
-    return (
+    return withOverlays(
       <AppStyleDashboard
         events={events}
         isAdmin={isAdmin}
@@ -6320,8 +6411,14 @@ export default function BitAffairs() {
     );
   }
   if (session && role === "studio" && viewingMore) {
-    return (
+    return withOverlays(
       <AppStyleMoreMenu
+        theme={theme}
+        onSetTheme={setTheme}
+        showPush={pushSupported && Boolean(VAPID_PUBLIC_KEY) && !needsClientEventChoice}
+        pushPermission={pushPermission}
+        pushSubscribed={pushSubscribed}
+        onEnablePush={enableNotifications}
         isAdmin={isAdmin}
         pendingCount={pendingCount}
         onBack={() => setViewingMore(false)}
@@ -6347,11 +6444,11 @@ export default function BitAffairs() {
     );
   }
   if (session && role === "studio" && viewingCalendar) {
-    return <AppStyleComingSoon onBack={() => setViewingCalendar(false)} />;
+    return withOverlays(<AppStyleComingSoon onBack={() => setViewingCalendar(false)} />);
   }
 
   return (
-    <div data-theme={role === "client" ? "dark" : undefined} style={{ minHeight: "100vh", background: COLORS.paper, color: COLORS.ink }}>
+    <div style={{ minHeight: "100vh", background: COLORS.paper, color: COLORS.ink }}>
       <style>{`
         ${FONT_IMPORT}
         * { box-sizing: border-box; }
@@ -6366,6 +6463,8 @@ export default function BitAffairs() {
       `}</style>
 
       <TopNav
+        theme={theme}
+        onSetTheme={setTheme}
         role={role}
         inEvent={!!openEventId}
         onBackToDashboard={() => {
@@ -6547,14 +6646,7 @@ export default function BitAffairs() {
         </div>
       )}
 
-      <NotificationToasts
-        notifications={notifications}
-        onDismiss={(id) => setNotifications((prev) => prev.filter((n) => n.id !== id))}
-      />
-
-      {pushSupported && VAPID_PUBLIC_KEY && session && !isPreview && !needsClientEventChoice && pushPermission === "default" && !pushBannerDismissed && (
-        <PushNotificationBanner onEnable={enableNotifications} onDismiss={dismissPushBanner} />
-      )}
+      {overlaysFor(0)}
     </div>
   );
 }
